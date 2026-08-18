@@ -7,6 +7,7 @@ from ofertaks.localization import t
 from ofertaks.parsing.unit_parser import format_quantity, format_unit_price
 from ofertaks.services.comparison_service import classify_price_status
 from ofertaks.services.history_service import HistoryService
+from ofertaks.services.price_integrity import PriceIntegrityService
 from ofertaks.ui.theme import (
     CATEGORY_ART_COLORS,
     MUTED,
@@ -33,7 +34,7 @@ class OfferCardMixin:
             spacing=dp(4),
             padding=dp(10),
             size_hint_y=None,
-            height=dp(178),
+            height=dp(200),
         )
         add_card_background(card, radius=6)
         header = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(68), spacing=dp(10))
@@ -59,8 +60,26 @@ class OfferCardMixin:
         header.add_widget(details)
         card.add_widget(header)
 
-        history, origin = self._offer_context(offer)
+        history, origin, assessment = self._offer_context(offer)
         status = classify_price_status(offer.offer_price, history)
+        assessment_key = {
+            "EXCEPTIONAL_DEAL": "price_integrity_exceptional",
+            "GOOD_DEAL": "price_integrity_good",
+            "NORMAL_PRICE": "price_integrity_normal",
+            "EXPENSIVE": "price_integrity_expensive",
+            "VERY_EXPENSIVE": "price_integrity_very_expensive",
+            "WEAK_PROMOTION": "price_integrity_weak_promotion",
+            "INSUFFICIENT_HISTORY": "price_integrity_insufficient_history",
+        }.get(assessment.primary_status if assessment else "", status.key)
+        assessment_color = {
+            "EXCEPTIONAL_DEAL": "exceptional",
+            "GOOD_DEAL": "cheap",
+            "NORMAL_PRICE": "neutral",
+            "EXPENSIVE": "expensive",
+            "VERY_EXPENSIVE": "high",
+            "WEAK_PROMOTION": "expensive",
+            "INSUFFICIENT_HISTORY": "neutral",
+        }.get(assessment.primary_status if assessment else "", status.color_key)
         card.add_widget(
             make_label(
                 text=f"{t('current_price')}: {_money(offer.offer_price)}",
@@ -108,10 +127,10 @@ class OfferCardMixin:
         )
         row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(34), spacing=dp(8))
         badge = BoxLayout(size_hint=(None, 1), width=dp(168), padding=dp(4))
-        add_fill_background(badge, PRICE_STATUS_COLORS[status.color_key], radius=4)
+        add_fill_background(badge, PRICE_STATUS_COLORS[assessment_color], radius=4)
         badge.add_widget(
             make_label(
-                text=t(status.key),
+                text=t(assessment_key),
                 halign="center",
                 valign="middle",
                 color=(1, 1, 1, 1),
@@ -143,13 +162,30 @@ class OfferCardMixin:
             return cache[key]
         history = None
         observations = []
+        product_id = None
         repository = getattr(getattr(self, "app", None), "repository", None)
         if repository is not None:
             product_id = repository.find_product_id_for_offer(offer)
             if product_id is not None:
                 history = HistoryService(repository).stats_for_product(product_id)
             observations = repository.origin_observations_for_offer(offer)
-        context = (history, origin_display_for_offer(offer, observations))
+        assessment = None
+        if repository is not None and product_id is not None:
+            promotions = repository.active_promotion_events(product_id, merchant_id=offer.merchant_id)
+            if not promotions and offer.chain_id:
+                promotions = repository.active_promotion_events(product_id, chain_id=offer.chain_id)
+            assessment = PriceIntegrityService(repository).assess(
+                product_id,
+                offer.offer_price,
+                current_unit_price=offer.unit_price,
+                quantity=offer.quantity,
+                unit=offer.unit,
+                promotion=promotions[0] if promotions else None,
+                observed_at=offer.scraped_at,
+                merchant_id=offer.merchant_id,
+                chain_id=offer.chain_id,
+            )
+        context = (history, origin_display_for_offer(offer, observations), assessment)
         cache[key] = context
         return context
 

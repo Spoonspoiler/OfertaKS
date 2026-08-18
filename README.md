@@ -143,6 +143,12 @@ More detail is in `docs/ARCHITECTURE.md`, `docs/DATA_MODEL.md`, and `AGENTS.md`.
 
 Schema version 5 adds a local canonical-product knowledge base and a historical evidence archive. Raw retailer, flyer, receipt, and manual evidence is append-only; its original source fields are retained even when a later match links it to a canonical product. Product aliases are scoped by merchant, chain, or scraper store, conflicts remain visible for validation, and product merges are reversible. Historical source discovery begins at `2025-01-01`; this foundation does not imply OCR, fabricated history, or background crawling.
 
+## Price Integrity And Real Deals
+
+Schema version 6 keeps `promotion_events` separate from append-only normalized `price_history`. A promotion preserves the advertised reference, discount, dates, source, scope, and confidence; OfertaKS then evaluates the current price against exact-product evidence rather than trusting the label. The current analysis uses deterministic 30/90/365-day and all-time statistics, a stable regular-price reference, and unit-price comparisons when compatible package data exists.
+
+The app only makes a historical deal claim after at least three exact-product observations. It can show exceptional, good, normal, expensive, very expensive, weak-promotion, and insufficient-history states, along with warnings for recent increases, increase-before-promotion, advertised-discount mismatch, and an unchanged package price with a higher unit price. A map merchant receives a deal summary only from fresh evidence tied to that concrete merchant; chain-wide sources are not presented as branch-specific prices. This ranking has no partner, payment, or commercial input.
+
 ## Git Workflow
 
 Before significant work, inspect status/history/diff. After meaningful changes, update `CHANGELOG.md` and `docs/DEVLOG.md`, run tests, and propose a commit message with a clear prefix such as `feat:`, `fix:`, `test:`, or `docs:`.

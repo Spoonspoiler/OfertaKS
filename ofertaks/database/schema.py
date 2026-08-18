@@ -1,6 +1,6 @@
 """SQLite schema for OfertaKS."""
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SCHEMA_SQL = """
 PRAGMA foreign_keys = ON;
@@ -158,13 +158,46 @@ CREATE TABLE IF NOT EXISTS offers (
     scraped_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS promotion_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    canonical_product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    merchant_id TEXT REFERENCES merchants(id),
+    chain_id TEXT REFERENCES chains(id),
+    promo_price REAL NOT NULL,
+    advertised_reference_price REAL,
+    advertised_discount_percent REAL,
+    advertised_discount_amount REAL,
+    valid_from TEXT,
+    valid_until TEXT,
+    published_at TEXT,
+    observed_at TEXT NOT NULL,
+    source_type TEXT NOT NULL,
+    source_id TEXT,
+    source_document_id INTEGER REFERENCES historical_source_documents(id),
+    source_url TEXT,
+    raw_offer_text TEXT,
+    geographic_scope TEXT NOT NULL DEFAULT 'UNKNOWN',
+    confidence REAL NOT NULL DEFAULT 0.5,
+    dedupe_key TEXT,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS price_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
     store_id TEXT NOT NULL REFERENCES stores(id),
+    merchant_id TEXT REFERENCES merchants(id),
+    chain_id TEXT REFERENCES chains(id),
     price REAL NOT NULL,
     normal_price REAL,
+    unit_price REAL,
+    quantity REAL,
+    unit TEXT,
     observed_at TEXT NOT NULL,
+    valid_from TEXT,
+    valid_until TEXT,
+    observation_context TEXT NOT NULL DEFAULT 'REGULAR',
+    promotion_event_id INTEGER REFERENCES promotion_events(id),
     raw_observation_id INTEGER,
     source_type TEXT,
     confidence_state TEXT
@@ -547,6 +580,15 @@ PRODUCT_MIGRATION_COLUMNS = {
 }
 
 PRICE_HISTORY_MIGRATION_COLUMNS = {
+    "merchant_id": "TEXT REFERENCES merchants(id)",
+    "chain_id": "TEXT REFERENCES chains(id)",
+    "unit_price": "REAL",
+    "quantity": "REAL",
+    "unit": "TEXT",
+    "valid_from": "TEXT",
+    "valid_until": "TEXT",
+    "observation_context": "TEXT NOT NULL DEFAULT 'REGULAR'",
+    "promotion_event_id": "INTEGER",
     "raw_observation_id": "INTEGER",
     "source_type": "TEXT",
     "confidence_state": "TEXT",
@@ -557,6 +599,17 @@ CREATE INDEX IF NOT EXISTS idx_offers_merchant ON offers(merchant_id);
 CREATE INDEX IF NOT EXISTS idx_offers_chain ON offers(chain_id);
 CREATE INDEX IF NOT EXISTS idx_merchants_source ON merchants(source_type, source_id);
 CREATE INDEX IF NOT EXISTS idx_price_history_raw_observation ON price_history(raw_observation_id);
+CREATE INDEX IF NOT EXISTS idx_price_history_merchant ON price_history(merchant_id, product_id, observed_at);
+CREATE INDEX IF NOT EXISTS idx_price_history_chain ON price_history(chain_id, product_id, observed_at);
+CREATE INDEX IF NOT EXISTS idx_price_history_context ON price_history(product_id, observation_context, observed_at);
+CREATE INDEX IF NOT EXISTS idx_promotion_events_product_active
+ON promotion_events(canonical_product_id, valid_until, observed_at);
+CREATE INDEX IF NOT EXISTS idx_promotion_events_merchant_active
+ON promotion_events(merchant_id, valid_until, observed_at);
+CREATE INDEX IF NOT EXISTS idx_promotion_events_chain_active
+ON promotion_events(chain_id, valid_until, observed_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_promotion_events_dedupe
+ON promotion_events(dedupe_key) WHERE dedupe_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_aliases_merchant_lookup ON product_aliases(merchant_id, normalized_name);
 CREATE INDEX IF NOT EXISTS idx_aliases_chain_lookup ON product_aliases(chain_id, normalized_name);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_products_gtin

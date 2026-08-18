@@ -7,6 +7,7 @@ from ofertaks.localization import t
 from ofertaks.parsing.unit_parser import format_quantity, format_unit_price
 from ofertaks.services.comparison_service import classify_price_status
 from ofertaks.services.history_service import HistoryService
+from ofertaks.services.price_integrity import PriceIntegrityService
 from ofertaks.ui.theme import MUTED, PRICE_STATUS_COLORS, bind_scroll_content_width, make_label, make_screen_layout
 from ofertaks.utils.categories import category_label_key
 
@@ -140,10 +141,23 @@ class ProductDetailScreen(Screen):
         comparable = []
         history = None
         observations = []
+        assessment = None
         if product_id is not None:
             comparable = self.app.repository.offers_for_product(product_id)
             history = HistoryService(self.app.repository).stats_for_product(product_id)
             observations = self.app.repository.origin_observations_for_offer(offer)
+            promotions = self.app.repository.active_promotion_events(product_id, merchant_id=offer.merchant_id)
+            if not promotions and offer.chain_id:
+                promotions = self.app.repository.active_promotion_events(product_id, chain_id=offer.chain_id)
+            assessment = PriceIntegrityService(self.app.repository).assess(
+                product_id,
+                offer.offer_price,
+                current_unit_price=offer.unit_price,
+                quantity=offer.quantity,
+                unit=offer.unit,
+                promotion=promotions[0] if promotions else None,
+                observed_at=offer.scraped_at,
+            )
         if not comparable:
             comparable = self.app.repository.search_offers(offer.raw_name, limit=12)
         if comparable:
@@ -162,8 +176,28 @@ class ProductDetailScreen(Screen):
 
             self.price_rows.height = dp(30)
         status = classify_price_status(offer.offer_price, history)
-        self.status_label.text = t(status.key)
-        self.status_label.color = PRICE_STATUS_COLORS[status.color_key]
+        integrity_key = {
+            "EXCEPTIONAL_DEAL": "price_integrity_exceptional",
+            "GOOD_DEAL": "price_integrity_good",
+            "NORMAL_PRICE": "price_integrity_normal",
+            "EXPENSIVE": "price_integrity_expensive",
+            "VERY_EXPENSIVE": "price_integrity_very_expensive",
+            "WEAK_PROMOTION": "price_integrity_weak_promotion",
+            "INSUFFICIENT_HISTORY": "price_integrity_insufficient_history",
+        }
+        integrity_color = {
+            "EXCEPTIONAL_DEAL": "exceptional",
+            "GOOD_DEAL": "cheap",
+            "NORMAL_PRICE": "neutral",
+            "EXPENSIVE": "expensive",
+            "VERY_EXPENSIVE": "high",
+            "WEAK_PROMOTION": "expensive",
+            "INSUFFICIENT_HISTORY": "neutral",
+        }
+        self.status_label.text = t(integrity_key.get(assessment.primary_status if assessment else "", status.key))
+        self.status_label.color = PRICE_STATUS_COLORS[
+            integrity_color.get(assessment.primary_status if assessment else "", status.color_key)
+        ]
         origin = origin_display_for_offer(offer, observations)
         if origin.country:
             location = ", ".join(part for part in [origin.country, origin.region] if part)
@@ -173,10 +207,18 @@ class ProductDetailScreen(Screen):
         else:
             self.origin_label.text = t("origin_unknown")
         self.origin_explanation.text = t(origin.explanation_key)
-        if history and history.enough_history:
+        if assessment and assessment.reference_price is not None:
+            reference = f"{assessment.reference_price:.2f} EUR"
+            difference = f"{assessment.difference_percent:+.0f}%" if assessment.difference_percent is not None else ""
+            self.history_explanation.text = " | ".join(
+                part
+                for part in [t("price_reference"), reference, difference, t(assessment.explanation_key)]
+                if part
+            )
+        elif history and history.enough_history:
             self.history_explanation.text = t("price_history_explanation")
         else:
-            self.history_explanation.text = t("not_enough_history")
+            self.history_explanation.text = t("price_integrity_insufficient_history")
         self.graph.set_prices(
             [row["price"] for row in self.app.repository.historical_prices(product_id)]
             if product_id is not None

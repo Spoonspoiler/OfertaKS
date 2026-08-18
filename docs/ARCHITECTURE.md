@@ -48,6 +48,14 @@ Scrapers are independent. A broken scraper returns `failed` or `partial` and mus
 
 `product_sources` and `product_attribute_evidence` make official-source enrichment traceable. Conflicting fields create validation work instead of silently replacing known values. Historical discovery starts at 2025-01-01 and only records metadata or evidence provided by an explicit adapter; OCR and bulk crawling are deliberately outside this layer.
 
+## Price Integrity
+
+`promotion_events` stores a merchant or chain advertising claim independently from `price_history`. A promotion can have an advertised reference price, discount amount/percentage, validity dates, raw source text, source URL/document, scope, and confidence. It is deduplicated but never treated as proof that the advertised reduction is a good price.
+
+`HistoricalPriceStatsService` queries exact canonical identities only and computes bounded 30/90/365-day and all-time statistics. `PriceIntegrityService` compares the current package or compatible unit price with a stable regular-price reference. It produces a consumer-facing primary status and separate warnings. Three observations are the minimum for a historical claim. Package changes use unit pricing; products of a different size, variant, family, or category are not mixed into direct history.
+
+`MerchantDealSummaryService` reads bounded, fresh current observations for the visible map merchants. It has no partner, revenue, sponsored, or chain-size input. Chain-level events may inform an associated chain offer, but they never become a concrete branch price without branch-specific evidence.
+
 ## Location Model
 
 Merchant/place is the fundamental entity. A chain is an attribute. `stores` exists for scraper compatibility and should not become the primary real-world model.

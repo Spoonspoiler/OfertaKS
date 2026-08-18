@@ -297,18 +297,47 @@ class MapUISmokeTests(TestCase):
                 repo = Repository(Database(Path(tmp) / "ui.sqlite3"))
                 repo.initialize()
                 repo.add_merchant(merchant("ui-market", "UI market", MARKET, 42.6597, 21.1566))
+                offer = Offer(
+                    store_id="etc",
+                    store_name="ETC",
+                    raw_name="Tomatoes",
+                    normalized_name="tomatoes",
+                    brand=None,
+                    quantity=1000,
+                    unit="g",
+                    normal_price=2.0,
+                    offer_price=1.5,
+                    unit_price=1.5,
+                    discount_percent=25.0,
+                    valid_from=None,
+                    valid_until=None,
+                    category=FRUIT_VEGETABLE,
+                    source_url="https://example.test/tomatoes",
+                    image_url=None,
+                    scraped_at=datetime.now(UTC),
+                )
+                repo.insert_offer(offer)
                 app = OfertaKSApp(repo)
                 app.build()
                 self.assertIn("map", app.screens)
                 self.assertIn("map", {name for name in app.nav_buttons})
+                offers_screen = app.screens["offers"]
+                self.assertEqual(len(offers_screen.category_row.children), 10)
+                self.assertEqual(len(offers_screen.offer_list.children), 1)
+                self.assertGreaterEqual(offers_screen.offer_list.children[0].height, 196)
+                app.show_product(offer)
+                detail = app.screens["product_detail"]
+                self.assertEqual(detail.status_label.text, "Not enough history")
+                self.assertNotIn("{", detail.history_explanation.text)
                 app.show_map()
                 map_screen = app.screens["map"]
                 map_screen._viewport_changed(map_screen.map_surface.visible_bbox())
                 self.assertEqual(app.screen_manager.current, "map")
-                self.assertEqual(len(map_screen.filter_row.children), 7)
+                self.assertEqual(len(map_screen.filter_row.children), 9)
                 self.assertEqual(len(map_screen.map_surface._marker_buttons), 1)
                 result = map_screen.service.viewport_merchants(map_screen.map_surface.visible_bbox())[0]
                 map_screen._merchant_selected(result)
                 self.assertGreater(map_screen.card.opacity, 0)
+                self.assertGreaterEqual(map_screen.card.height, 184)
         finally:
             os.environ.pop("OFERTAKS_DISABLE_MAP_TILES", None)

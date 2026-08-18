@@ -30,6 +30,7 @@ from ofertaks.models.knowledge import (
     ValidationTask,
 )
 from ofertaks.models.offer import Offer
+from ofertaks.models.pricing import PRICE_CONTEXTS, PROMOTION, REGULAR, PriceObservation, PromotionEvent
 from ofertaks.models.recipe import Recipe, RecipeIngredient
 from ofertaks.normalization.product_normalizer import normalize_product_name
 from ofertaks.utils.categories import category_filter_values
@@ -167,25 +168,8 @@ class Repository:
                 )
                 self._ensure_product_alias(db, product_id, offer.store_id, offer.raw_name, offer.normalized_name)
                 raw_observation_id = self._record_offer_evidence(db, offer, product_id)
-                db.execute(
-                    """
-                    INSERT INTO price_history (
-                        product_id, store_id, price, normal_price, observed_at,
-                        raw_observation_id, source_type, confidence_state
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        product_id,
-                        offer.store_id,
-                        offer.offer_price,
-                        offer.normal_price,
-                        offer.scraped_at.isoformat(timespec="seconds"),
-                        raw_observation_id,
-                        "SCRAPER_HTML",
-                        "MEDIUM",
-                    ),
-                )
+                promotion_event_id = self._record_offer_promotion(db, offer, product_id)
+                self._record_offer_price_history(db, offer, product_id, raw_observation_id, promotion_event_id)
 
     def insert_offer(self, offer: Offer) -> int:
         with self.database.connect() as db:
@@ -211,25 +195,8 @@ class Repository:
             )
             self._ensure_product_alias(db, product_id, offer.store_id, offer.raw_name, offer.normalized_name)
             raw_observation_id = self._record_offer_evidence(db, offer, product_id)
-            db.execute(
-                """
-                INSERT INTO price_history (
-                    product_id, store_id, price, normal_price, observed_at,
-                    raw_observation_id, source_type, confidence_state
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    product_id,
-                    offer.store_id,
-                    offer.offer_price,
-                    offer.normal_price,
-                    offer.scraped_at.isoformat(timespec="seconds"),
-                    raw_observation_id,
-                    "SCRAPER_HTML",
-                    "MEDIUM",
-                ),
-            )
+            promotion_event_id = self._record_offer_promotion(db, offer, product_id)
+            self._record_offer_price_history(db, offer, product_id, raw_observation_id, promotion_event_id)
             return int(cursor.lastrowid)
 
     def _upsert_product(self, db, offer: Offer) -> int:
@@ -381,6 +348,161 @@ class Repository:
             dedupe_key=sha256(dedupe_payload.encode("utf-8")).hexdigest(),
         )
         return self._insert_raw_observation(db, observation)
+
+    def _record_offer_promotion(self, db, offer: Offer, product_id: int) -> int | None:
+        advertised_discount = offer.discount_percent
+        if advertised_discount is None and offer.normal_price and offer.normal_price > offer.offer_price:
+            advertised_discount = round((offer.normal_price - offer.offer_price) / offer.normal_price * 100, 2)
+        if not advertised_discount and not (offer.normal_price and offer.normal_price > offer.offer_price):
+            return None
+        scope = "MERCHANT_ONLY" if offer.merchant_id else "CHAIN_WIDE" if offer.chain_id else "UNKNOWN"
+        dedupe_payload = "|".join(
+            (
+                "promotion",
+                str(product_id),
+                offer.merchant_id or "",
+                offer.chain_id or "",
+                offer.store_id,
+                offer.source_url,
+                str(offer.offer_price),
+                offer.valid_from.isoformat() if offer.valid_from else "",
+                offer.valid_until.isoformat() if offer.valid_until else "",
+                str(advertised_discount or ""),
+            )
+        )
+        return self._insert_promotion_event(
+            db,
+            PromotionEvent(
+                canonical_product_id=product_id,
+                promo_price=offer.offer_price,
+                merchant_id=offer.merchant_id,
+                chain_id=offer.chain_id,
+                advertised_reference_price=offer.normal_price,
+                advertised_discount_percent=advertised_discount,
+                valid_from=offer.valid_from,
+                valid_until=offer.valid_until,
+                observed_at=offer.scraped_at,
+                source_type="SCRAPER_HTML",
+                source_id=offer.store_id,
+                source_url=offer.source_url,
+                raw_offer_text=offer.raw_name,
+                geographic_scope=scope,
+                confidence=0.75,
+                dedupe_key=sha256(dedupe_payload.encode("utf-8")).hexdigest(),
+            ),
+        )
+
+    def _record_offer_price_history(
+        self,
+        db,
+        offer: Offer,
+        product_id: int,
+        raw_observation_id: int,
+        promotion_event_id: int | None,
+    ) -> int:
+        context = PROMOTION if promotion_event_id is not None else REGULAR
+        cursor = db.execute(
+            """
+            INSERT INTO price_history (
+                product_id, store_id, merchant_id, chain_id, price, normal_price,
+                unit_price, quantity, unit, observed_at, valid_from, valid_until,
+                observation_context, promotion_event_id, raw_observation_id,
+                source_type, confidence_state
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                product_id,
+                offer.store_id,
+                offer.merchant_id,
+                offer.chain_id,
+                offer.offer_price,
+                offer.normal_price,
+                offer.unit_price,
+                offer.quantity,
+                offer.unit,
+                offer.scraped_at.isoformat(timespec="seconds"),
+                offer.valid_from.isoformat() if offer.valid_from else None,
+                offer.valid_until.isoformat() if offer.valid_until else None,
+                context,
+                promotion_event_id,
+                raw_observation_id,
+                "SCRAPER_HTML",
+                "MEDIUM",
+            ),
+        )
+        return int(cursor.lastrowid)
+
+    def record_promotion_event(self, event: PromotionEvent) -> int:
+        """Append the merchant claim separately from OfertaKS price analysis."""
+
+        if event.promo_price <= 0:
+            raise ValueError("Promotion price must be greater than zero")
+        with self.database.connect() as db:
+            return self._insert_promotion_event(db, event)
+
+    def _insert_promotion_event(self, db, event: PromotionEvent) -> int:
+        dedupe_key = event.dedupe_key or self._promotion_event_dedupe_key(event)
+        cursor = db.execute(
+            """
+            INSERT OR IGNORE INTO promotion_events (
+                canonical_product_id, merchant_id, chain_id, promo_price,
+                advertised_reference_price, advertised_discount_percent,
+                advertised_discount_amount, valid_from, valid_until, published_at,
+                observed_at, source_type, source_id, source_document_id, source_url,
+                raw_offer_text, geographic_scope, confidence, dedupe_key, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event.canonical_product_id,
+                event.merchant_id,
+                event.chain_id,
+                event.promo_price,
+                event.advertised_reference_price,
+                event.advertised_discount_percent,
+                event.advertised_discount_amount,
+                event.valid_from.isoformat() if event.valid_from else None,
+                event.valid_until.isoformat() if event.valid_until else None,
+                self._timestamp(event.published_at),
+                self._timestamp(event.observed_at) or self._now(),
+                event.source_type.upper(),
+                event.source_id,
+                event.source_document_id,
+                event.source_url,
+                event.raw_offer_text,
+                event.geographic_scope.upper(),
+                max(0.0, min(1.0, event.confidence)),
+                dedupe_key,
+                self._now(),
+            ),
+        )
+        if cursor.rowcount:
+            return int(cursor.lastrowid)
+        if dedupe_key:
+            row = db.execute("SELECT id FROM promotion_events WHERE dedupe_key = ?", (dedupe_key,)).fetchone()
+            if row:
+                return int(row["id"])
+        raise RuntimeError("Promotion event could not be stored")
+
+    @staticmethod
+    def _promotion_event_dedupe_key(event: PromotionEvent) -> str:
+        payload = "|".join(
+            str(value or "")
+            for value in (
+                event.canonical_product_id,
+                event.merchant_id,
+                event.chain_id,
+                event.promo_price,
+                event.advertised_reference_price,
+                event.advertised_discount_percent,
+                event.valid_from,
+                event.valid_until,
+                event.source_type,
+                event.source_id,
+                event.source_document_id,
+                event.source_url,
+            )
+        )
+        return sha256(payload.encode("utf-8")).hexdigest()
 
     def record_raw_observation(self, observation: RawObservation) -> int:
         """Append source evidence without allowing later rewrites of raw fields."""
@@ -607,6 +729,48 @@ class Repository:
         sql += " ORDER BY observed_at ASC"
         with self.database.connect() as db:
             return [dict(row) for row in db.execute(sql, params)]
+
+    def record_price_observation(self, observation: PriceObservation) -> int:
+        """Append one normalized price fact without mutating prior evidence."""
+
+        if observation.price <= 0:
+            raise ValueError("Price must be greater than zero")
+        if not observation.store_id:
+            raise ValueError("A store_id is required for price history")
+        context = observation.observation_context.upper()
+        if context not in PRICE_CONTEXTS:
+            raise ValueError(f"Unsupported price observation context: {observation.observation_context}")
+        with self.database.connect() as db:
+            cursor = db.execute(
+                """
+                INSERT INTO price_history (
+                    product_id, store_id, merchant_id, chain_id, price, normal_price,
+                    unit_price, quantity, unit, observed_at, valid_from, valid_until,
+                    observation_context, promotion_event_id, raw_observation_id,
+                    source_type, confidence_state
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    observation.product_id,
+                    observation.store_id,
+                    observation.merchant_id,
+                    observation.chain_id,
+                    observation.price,
+                    observation.normal_price,
+                    observation.unit_price,
+                    observation.quantity,
+                    observation.unit,
+                    self._timestamp(observation.observed_at),
+                    observation.valid_from.isoformat() if observation.valid_from else None,
+                    observation.valid_until.isoformat() if observation.valid_until else None,
+                    context,
+                    observation.promotion_event_id,
+                    observation.raw_observation_id,
+                    observation.source_type.upper(),
+                    observation.confidence_state.upper(),
+                ),
+            )
+            return int(cursor.lastrowid)
 
     def create_canonical_product(self, product: CanonicalProduct) -> int:
         """Create or reuse a specific purchasable identity without guessing missing fields."""
@@ -1006,34 +1170,145 @@ class Repository:
                 )
             ]
 
-    def historical_prices(self, product_id: int) -> list[dict[str, Any]]:
-        """Return current and archived observations without double-counting linked scraper rows."""
+    def historical_prices(
+        self,
+        product_id: int,
+        *,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
+        merchant_id: str | None = None,
+        chain_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return an exact-product timeline without double-counting linked evidence."""
 
         with self.database.connect() as db:
             product_ids = self._merged_product_ids(db, self._resolve_product_id(db, product_id))
             placeholders = ",".join("?" for _ in product_ids)
+            conditions: list[str] = []
+            params: list[Any] = [*product_ids, *product_ids]
+            if start_at:
+                conditions.append("observed_at >= ?")
+                params.append(self._timestamp(start_at))
+            if end_at:
+                conditions.append("observed_at <= ?")
+                params.append(self._timestamp(end_at))
+            if merchant_id:
+                conditions.append("merchant_id = ?")
+                params.append(merchant_id)
+            if chain_id:
+                conditions.append("chain_id = ?")
+                params.append(chain_id)
+            where = " WHERE " + " AND ".join(conditions) if conditions else ""
             rows = db.execute(
                 f"""
-                SELECT price, normal_price, observed_at, source_type, confidence_state,
-                       raw_observation_id, 'PRICE_HISTORY' AS evidence_kind
-                FROM price_history
-                WHERE product_id IN ({placeholders})
-                UNION ALL
-                SELECT parsed_price AS price, NULL AS normal_price,
-                       COALESCE(observed_at, created_at) AS observed_at,
-                       source_type, matching_status AS confidence_state,
-                       id AS raw_observation_id, 'RAW_OBSERVATION' AS evidence_kind
-                FROM raw_observations r
-                WHERE canonical_product_id IN ({placeholders})
-                  AND parsed_price IS NOT NULL
-                  AND NOT EXISTS (
-                      SELECT 1 FROM price_history p WHERE p.raw_observation_id = r.id
-                  )
-                ORDER BY observed_at, raw_observation_id
+                SELECT * FROM (
+                    SELECT p.id AS timeline_id, p.product_id, p.store_id, p.merchant_id, p.chain_id,
+                           p.price, p.normal_price, p.unit_price, p.quantity, p.unit,
+                           p.observed_at, p.valid_from, p.valid_until, p.observation_context,
+                           p.promotion_event_id, p.source_type, p.confidence_state,
+                           p.raw_observation_id, 'PRICE_HISTORY' AS evidence_kind
+                    FROM price_history p
+                    WHERE p.product_id IN ({placeholders})
+                    UNION ALL
+                    SELECT -r.id AS timeline_id, r.canonical_product_id AS product_id,
+                           r.store_id, r.merchant_id, r.chain_id, r.parsed_price AS price,
+                           NULL AS normal_price, NULL AS unit_price, NULL AS quantity, NULL AS unit,
+                           COALESCE(r.observed_at, r.created_at) AS observed_at,
+                           r.valid_from, r.valid_until,
+                           CASE WHEN r.source_type = 'FLYER_PDF' THEN 'FLYER' ELSE 'UNKNOWN' END AS observation_context,
+                           NULL AS promotion_event_id, r.source_type,
+                           r.matching_status AS confidence_state, r.id AS raw_observation_id,
+                           'RAW_OBSERVATION' AS evidence_kind
+                    FROM raw_observations r
+                    WHERE r.canonical_product_id IN ({placeholders})
+                      AND r.parsed_price IS NOT NULL
+                      AND NOT EXISTS (
+                          SELECT 1 FROM price_history p WHERE p.raw_observation_id = r.id
+                      )
+                ){where}
+                ORDER BY observed_at, timeline_id
                 """,
-                [*product_ids, *product_ids],
+                params,
             )
             return [dict(row) for row in rows]
+
+    def price_timeline(self, product_id: int, **filters: Any) -> list[dict[str, Any]]:
+        """Named timeline query for analysis and future charts."""
+
+        return self.historical_prices(product_id, **filters)
+
+    def active_promotion_events(
+        self,
+        product_id: int | None = None,
+        *,
+        merchant_id: str | None = None,
+        chain_id: str | None = None,
+        now: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        now = now or datetime.now(UTC)
+        today = now.date().isoformat()
+        where = ["(valid_from IS NULL OR valid_from <= ?)", "(valid_until IS NULL OR valid_until >= ?)"]
+        params: list[Any] = [today, today]
+        if product_id is not None:
+            where.append("canonical_product_id = ?")
+            params.append(product_id)
+        if merchant_id is not None:
+            where.append("merchant_id = ?")
+            params.append(merchant_id)
+        if chain_id is not None:
+            where.append("chain_id = ?")
+            params.append(chain_id)
+        sql = "SELECT * FROM promotion_events WHERE " + " AND ".join(where)
+        sql += " ORDER BY observed_at DESC, id DESC"
+        with self.database.connect() as db:
+            return [dict(row) for row in db.execute(sql, params)]
+
+    def current_merchant_prices(self, merchant_ids: Iterable[str] | None = None) -> list[dict[str, Any]]:
+        """Load bounded current merchant evidence, never chain-wide offers as branch facts."""
+
+        ids = list(merchant_ids or [])
+        merchant_where = ""
+        offer_merchant_where = ""
+        merchant_params: list[Any] = []
+        if ids:
+            merchant_where = f" AND merchant_id IN ({','.join('?' for _ in ids)})"
+            offer_merchant_where = f" AND o.merchant_id IN ({','.join('?' for _ in ids)})"
+            merchant_params = ids
+        sql = f"""
+            SELECT product_id, merchant_id, NULL AS chain_id, raw_name, price, quantity, unit,
+                   NULL AS unit_price, observed_at, 'USER_OBSERVED' AS observation_context,
+                   'USER_PRICE' AS evidence_kind, NULL AS promotion_event_id,
+                   origin_country, origin_region
+            FROM user_price_observations
+            WHERE product_id IS NOT NULL AND merchant_id IS NOT NULL AND price > 0{merchant_where}
+            UNION ALL
+            SELECT product_id, merchant_id, NULL AS chain_id, raw_name, price, quantity, unit,
+                   NULL AS unit_price, observed_at, 'MERCHANT_PROVIDED' AS observation_context,
+                   'MERCHANT_PRODUCT' AS evidence_kind, NULL AS promotion_event_id,
+                   origin_country, origin_region
+            FROM merchant_product_observations
+            WHERE product_id IS NOT NULL AND price IS NOT NULL AND price > 0{merchant_where}
+            UNION ALL
+            SELECT a.product_id, o.merchant_id, o.chain_id, o.raw_name, o.offer_price AS price,
+                   o.quantity, o.unit, o.unit_price, o.scraped_at AS observed_at,
+                   CASE WHEN o.normal_price > o.offer_price OR o.discount_percent > 0
+                        THEN 'PROMOTION' ELSE 'REGULAR' END AS observation_context,
+                   'CURRENT_OFFER' AS evidence_kind, NULL AS promotion_event_id,
+                   o.origin_country, o.origin_region
+            FROM offers o
+            JOIN product_aliases a ON a.store_id = o.store_id
+                AND a.raw_name = o.raw_name AND a.normalized_name = o.normalized_name
+            WHERE o.merchant_id IS NOT NULL{offer_merchant_where}
+            ORDER BY observed_at DESC
+        """
+        params = [*merchant_params, *merchant_params, *merchant_params]
+        newest: dict[tuple[str, int], dict[str, Any]] = {}
+        with self.database.connect() as db:
+            for row in db.execute(sql, params):
+                item = dict(row)
+                key = (item["merchant_id"], int(item["product_id"]))
+                newest.setdefault(key, item)
+        return list(newest.values())
 
     def upsert_historical_source_document(self, document: HistoricalSourceDocument) -> int:
         """Store one historical document once, even when discovery sees it repeatedly."""

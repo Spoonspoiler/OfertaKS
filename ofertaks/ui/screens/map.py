@@ -28,6 +28,18 @@ FILTER_LABEL_KEYS = {
     "fruit_vegetables": "fruit_vegetables",
     "bakeries": "bakeries",
     "butchers_fish": "butchers_fish",
+    "best_deals": "best_deals",
+    "price_warnings": "price_warnings",
+}
+
+ASSESSMENT_LABEL_KEYS = {
+    "EXCEPTIONAL_DEAL": "price_integrity_exceptional",
+    "GOOD_DEAL": "price_integrity_good",
+    "NORMAL_PRICE": "price_integrity_normal",
+    "EXPENSIVE": "price_integrity_expensive",
+    "VERY_EXPENSIVE": "price_integrity_very_expensive",
+    "WEAK_PROMOTION": "price_integrity_weak_promotion",
+    "INSUFFICIENT_HISTORY": "price_integrity_insufficient_history",
 }
 
 
@@ -94,7 +106,8 @@ class MapScreen(Screen):
         add_card_background(self.card, radius=6)
         self.card_title = make_label(size_hint_y=None, height=dp(24), bold=True, shorten=True)
         self.card_meta = make_label(size_hint_y=None, height=dp(20), color=MUTED, shorten=True)
-        self.card_observation = make_label(size_hint_y=None, height=dp(34), color=MUTED, shorten=True)
+        self.card_deals = make_label(size_hint_y=None, height=dp(48), font_size="11sp", color=MUTED)
+        self.card_observation = make_label(size_hint_y=None, height=dp(24), color=MUTED, shorten=True)
         actions = BoxLayout(size_hint_y=None, height=dp(34), spacing=dp(5))
         self.update_button = Button(text=t("update_price"), font_size="11sp")
         self.update_button.bind(on_release=lambda *_: self._update_price())
@@ -108,6 +121,7 @@ class MapScreen(Screen):
             actions.add_widget(button)
         self.card.add_widget(self.card_title)
         self.card.add_widget(self.card_meta)
+        self.card.add_widget(self.card_deals)
         self.card.add_widget(self.card_observation)
         self.card.add_widget(actions)
         self.map_container.add_widget(self.card)
@@ -220,6 +234,26 @@ class MapScreen(Screen):
             if part
         )
         observation = result.observation
+        summary = result.deal_summary
+        if summary and summary.best_deals:
+            counts = [
+                f"{summary.exceptional_deal_count} {t('exceptional_prices')}"
+                if summary.exceptional_deal_count
+                else "",
+                f"{summary.good_deal_count} {t('good_prices')}" if summary.good_deal_count else "",
+                f"{summary.price_integrity_warning_count} {t('price_warnings')}"
+                if summary.price_integrity_warning_count
+                else "",
+            ]
+            headline = " | ".join(item for item in counts if item) or t("no_recent_product_information")
+            examples = []
+            for deal in summary.best_deals[:2]:
+                label = t(ASSESSMENT_LABEL_KEYS.get(deal.assessment.primary_status, "price_integrity_normal"))
+                nearby = f" | {t('best_nearby_price')}" if deal.best_nearby else ""
+                examples.append(f"{deal.raw_name}: {deal.price:.2f} EUR | {label}{nearby}")
+            self.card_deals.text = "\n".join([headline, *examples])
+        else:
+            self.card_deals.text = t("no_current_deals")
         if observation:
             detail = observation["raw_name"]
             if observation.get("price") is not None:
@@ -231,7 +265,7 @@ class MapScreen(Screen):
         else:
             detail = t("no_recent_product_information") if self.product_id else t("no_recent_observations")
         self.card_observation.text = detail
-        self.card.height = dp(126)
+        self.card.height = dp(184)
         self.card.opacity = 1
 
     def _render_context(self) -> None:

@@ -29,6 +29,7 @@ from ofertaks.models.merchant import (
 )
 from ofertaks.services.comparison_service import classify_price_status
 from ofertaks.services.history_service import HistoryService
+from ofertaks.services.merchant_deals import MerchantDealSummary, MerchantDealSummaryService
 
 ALL_FOOD_FILTER = "all_food"
 MAP_FILTER_TYPES = {
@@ -39,6 +40,8 @@ MAP_FILTER_TYPES = {
     "fruit_vegetables": (FRUIT_VEGETABLE,),
     "bakeries": (BAKERY,),
     "butchers_fish": (BUTCHER, FISH),
+    "best_deals": None,
+    "price_warnings": None,
 }
 
 AVAILABILITY_CURRENT = "CURRENT"
@@ -70,11 +73,13 @@ class MapMerchantResult:
     price_status_key: str
     price_status_color: str
     marker_code: str
+    deal_summary: MerchantDealSummary | None = None
 
 
 class MapService:
     def __init__(self, repository: Repository):
         self.repository = repository
+        self.deals = MerchantDealSummaryService(repository)
 
     def viewport_merchants(
         self,
@@ -91,10 +96,42 @@ class MapService:
         evidence = self.repository.latest_product_evidence(product_id) if product_id else {}
         category = self.repository.product_category(product_id) if product_id else None
         history = HistoryService(self.repository).stats_for_product(product_id) if product_id else None
-        return [
-            self._result_for(merchant, evidence.get(merchant["id"]), category, history)
+        summaries = self.deals.summaries_for_merchants([merchant["id"] for merchant in merchants])
+        results = [
+            self._result_for(
+                merchant,
+                evidence.get(merchant["id"]),
+                category,
+                history,
+                summaries.get(merchant["id"]),
+            )
             for merchant in merchants
         ]
+        if filter_id == "best_deals":
+            results = [
+                result
+                for result in results
+                if result.deal_summary
+                and (
+                    result.deal_summary.exceptional_deal_count
+                    or result.deal_summary.good_deal_count
+                    or any(deal.best_nearby for deal in result.deal_summary.best_deals)
+                )
+            ]
+        elif filter_id == "price_warnings":
+            results = [
+                result
+                for result in results
+                if result.deal_summary and result.deal_summary.price_integrity_warning_count
+            ]
+        return sorted(
+            results,
+            key=lambda result: (
+                -(result.deal_summary.exceptional_deal_count if result.deal_summary else 0),
+                -(result.deal_summary.good_deal_count if result.deal_summary else 0),
+                result.merchant["name"],
+            ),
+        )
 
     def add_community_merchant(
         self,
@@ -133,7 +170,14 @@ class MapService:
             MerchantReport(merchant_id=merchant_id, report_type=report_type, notes=notes, reported_at=datetime.now(UTC))
         )
 
-    def _result_for(self, merchant: dict, observation: dict | None, category: str | None, history) -> MapMerchantResult:
+    def _result_for(
+        self,
+        merchant: dict,
+        observation: dict | None,
+        category: str | None,
+        history,
+        summary: MerchantDealSummary | None,
+    ) -> MapMerchantResult:
         if observation is None:
             availability = AVAILABILITY_UNKNOWN
             status_key = "not_enough_history"
@@ -147,11 +191,21 @@ class MapService:
                 status_key, status_color = status.key, status.color_key
             else:
                 status_key, status_color = "not_enough_history", "neutral"
+        if summary and summary.exceptional_deal_count:
+            status_key, status_color = "price_integrity_exceptional", "exceptional"
+        elif summary and summary.good_deal_count:
+            status_key, status_color = "price_integrity_good", "cheap"
+        elif summary and summary.price_integrity_warning_count:
+            status_key, status_color = "price_integrity_weak_promotion", "expensive"
+        marker_code = MARKER_CODES.get(merchant["merchant_type"], "FD")
+        if summary and summary.exceptional_deal_count:
+            marker_code = f"{marker_code} {summary.exceptional_deal_count}"
         return MapMerchantResult(
             merchant=merchant,
             availability=availability,
             observation=observation,
             price_status_key=status_key,
             price_status_color=status_color,
-            marker_code=MARKER_CODES.get(merchant["merchant_type"], "FD"),
+            marker_code=marker_code,
+            deal_summary=summary,
         )

@@ -64,6 +64,9 @@ SQLite schema lives in `ofertaks/database/schema.py`. Increment `SCHEMA_VERSION`
 - Raw scraped data must never be destroyed.
 - Historical source documents and raw observations are append-only evidence. Preserve original values; later matching must use links, validation state, or reversible merges rather than rewrites.
 - Canonical-product matching must distinguish exact product, same variant/different size, same product family, category equivalent, and unrelated items. Only exact products share direct price history.
+- Promotion claims must be stored separately from observed price history. Deal ranking must use deterministic consumer-facing historical/unit-price evidence, never partner, payment, sponsored, or commercial-relationship inputs.
+- A chain-wide offer is not a branch-specific merchant price. Map summaries may use only fresh current evidence tied to the concrete merchant; label unknown or chain scope honestly.
+- Price history is append-only. Do not update or delete observations to make a promotion appear better; preserve package quantity/unit and source context for later integrity checks.
 - Official-source data may fill blanks but must not silently overwrite conflicts; persist field evidence and create validation work instead.
 - Fake production data is forbidden. Fixtures belong only in tests or explicit developer data.
 - Scraping failure must not crash the app.
