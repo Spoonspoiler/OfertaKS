@@ -1,6 +1,6 @@
 """SQLite schema for OfertaKS."""
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA_SQL = """
 PRAGMA foreign_keys = ON;
@@ -40,6 +40,16 @@ CREATE TABLE IF NOT EXISTS merchants (
     community_added INTEGER NOT NULL DEFAULT 0,
     claimed_by_merchant INTEGER NOT NULL DEFAULT 0,
     verification_status TEXT NOT NULL DEFAULT 'unverified',
+    source_type TEXT NOT NULL DEFAULT 'UNKNOWN',
+    source_id TEXT,
+    osm_type TEXT,
+    osm_id TEXT,
+    osm_tags_json TEXT,
+    source_last_seen_at TEXT,
+    merchant_last_verified_at TEXT,
+    description TEXT,
+    photo_path TEXT,
+    community_status TEXT NOT NULL DEFAULT 'NOT_COMMUNITY',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -198,6 +208,35 @@ CREATE TABLE IF NOT EXISTS user_price_observations (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS merchant_product_observations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_id INTEGER REFERENCES products(id),
+    merchant_id TEXT NOT NULL REFERENCES merchants(id),
+    raw_name TEXT NOT NULL,
+    normalized_name TEXT NOT NULL,
+    price REAL,
+    quantity REAL,
+    unit TEXT,
+    origin_country TEXT,
+    origin_region TEXT,
+    origin_source TEXT NOT NULL DEFAULT 'USER_OBSERVATION',
+    origin_confidence TEXT NOT NULL DEFAULT 'unknown',
+    photo_path TEXT,
+    quality TEXT,
+    notes TEXT,
+    observed_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS merchant_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    merchant_id TEXT NOT NULL REFERENCES merchants(id),
+    report_type TEXT NOT NULL,
+    notes TEXT,
+    reported_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending'
+);
+
 CREATE TABLE IF NOT EXISTS quality_observations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     product_id INTEGER REFERENCES products(id),
@@ -258,6 +297,9 @@ CREATE INDEX IF NOT EXISTS idx_merchant_price_freshness
 ON merchant_price_observations(merchant_id, normalized_name, observed_at);
 CREATE INDEX IF NOT EXISTS idx_user_price_product
 ON user_price_observations(product_id, observed_at);
+CREATE INDEX IF NOT EXISTS idx_merchant_product_observation_lookup
+ON merchant_product_observations(merchant_id, product_id, observed_at);
+CREATE INDEX IF NOT EXISTS idx_merchant_reports_merchant ON merchant_reports(merchant_id, reported_at);
 CREATE INDEX IF NOT EXISTS idx_quality_product_merchant
 ON quality_observations(product_id, merchant_id, observed_at);
 CREATE INDEX IF NOT EXISTS idx_origin_product
@@ -278,7 +320,21 @@ OFFER_MIGRATION_COLUMNS = {
     "origin_region": "TEXT",
 }
 
+MERCHANT_MIGRATION_COLUMNS = {
+    "source_type": "TEXT NOT NULL DEFAULT 'UNKNOWN'",
+    "source_id": "TEXT",
+    "osm_type": "TEXT",
+    "osm_id": "TEXT",
+    "osm_tags_json": "TEXT",
+    "source_last_seen_at": "TEXT",
+    "merchant_last_verified_at": "TEXT",
+    "description": "TEXT",
+    "photo_path": "TEXT",
+    "community_status": "TEXT NOT NULL DEFAULT 'NOT_COMMUNITY'",
+}
+
 POST_MIGRATION_SQL = """
 CREATE INDEX IF NOT EXISTS idx_offers_merchant ON offers(merchant_id);
 CREATE INDEX IF NOT EXISTS idx_offers_chain ON offers(chain_id);
+CREATE INDEX IF NOT EXISTS idx_merchants_source ON merchants(source_type, source_id);
 """

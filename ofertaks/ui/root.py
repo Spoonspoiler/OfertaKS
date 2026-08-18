@@ -43,7 +43,9 @@ class OfertaKSApp(App if App is not None else object):
 
     def build(self):
         from ofertaks.ui.screens.basket import BasketScreen
+        from ofertaks.ui.screens.add_place import AddPlaceScreen
         from ofertaks.ui.screens.home import HomeScreen
+        from ofertaks.ui.screens.map import MapScreen
         from ofertaks.ui.screens.offers import OffersScreen
         from ofertaks.ui.screens.product_detail import ProductDetailScreen
         from ofertaks.ui.screens.price_update import PriceUpdateScreen
@@ -57,12 +59,14 @@ class OfertaKSApp(App if App is not None else object):
         self.screens = {
             "home": HomeScreen(app=self, name="home"),
             "offers": OffersScreen(app=self, name="offers"),
+            "map": MapScreen(app=self, name="map"),
             "search": SearchScreen(app=self, name="search"),
             "basket": BasketScreen(app=self, name="basket"),
             "stores": StoresScreen(app=self, name="stores"),
             "settings": SettingsScreen(app=self, name="settings"),
             "product_detail": ProductDetailScreen(app=self, name="product_detail"),
             "price_update": PriceUpdateScreen(app=self, name="price_update"),
+            "add_place": AddPlaceScreen(app=self, name="add_place"),
         }
         for screen in self.screens.values():
             self.screen_manager.add_widget(screen)
@@ -88,12 +92,13 @@ class OfertaKSApp(App if App is not None else object):
         for screen_name, label_key in [
             ("home", "home"),
             ("offers", "offers"),
+            ("map", "map"),
             ("search", "search"),
-            ("basket", "basket"),
+            ("basket", "basket_short"),
             ("stores", "stores"),
             ("settings", "settings"),
         ]:
-            button = Button(text=t(label_key))
+            button = Button(text=t(label_key), font_size="11sp")
             button.bind(on_release=lambda _, name=screen_name: self.show_screen(name))
             bar.add_widget(button)
             self.nav_buttons[label_key] = button
@@ -122,6 +127,23 @@ class OfertaKSApp(App if App is not None else object):
         detail = self.screens["product_detail"]
         detail.set_offer(offer)
         self.show_screen("product_detail")
+
+    def show_map(
+        self,
+        *,
+        product_id: int | None = None,
+        product_name: str | None = None,
+        merchant_id: str | None = None,
+        filter_id: str | None = None,
+    ) -> None:
+        map_screen = self.screens["map"]
+        map_screen.open_context(
+            product_id=product_id,
+            product_name=product_name,
+            merchant_id=merchant_id,
+            filter_id=filter_id,
+        )
+        self.show_screen("map")
 
     def refresh_all_screens(self) -> None:
         for screen in getattr(self, "screens", {}).values():

@@ -18,7 +18,7 @@ HTTP_TIMEOUT_SECONDS = 15
 HTTP_MAX_RETRIES = 2
 HTTP_MAX_CONCURRENT = 2
 HTTP_USER_AGENT = (
-    "OfertaKS/0.1 (+local Android app; respectful Kosovo supermarket offer indexing)"
+    "OfertaKS/0.1 (+https://github.com/Spoonspoiler/OfertaKS; respectful local food discovery)"
 )
 HOST_REQUEST_DELAY_SECONDS = 0.75
 IMAGE_CACHE_LIMIT_BYTES = 30 * 1024 * 1024
@@ -40,6 +40,29 @@ STORE_CONFIG = {
         "website": "https://etc-ks.com/",
         "enabled": True,
     },
+}
+
+# Chains are broader than scraper sources. A chain can have known locations while
+# its prices remain unavailable or only partially extracted.
+CHAIN_CONFIG = {
+    "etc": {"name": "ETC", "website": "https://etc-ks.com/", "enabled": True, "aliases": ("etc",)},
+    "viva_fresh": {
+        "name": "Viva Fresh",
+        "website": "https://vivafresh-rks.com/",
+        "enabled": True,
+        "aliases": ("viva fresh", "vivafresh"),
+    },
+    "interex": {"name": "Interex", "website": "https://interex-rks.com/", "enabled": True, "aliases": ("interex",)},
+    "albi_market": {"name": "Albi Market", "website": None, "enabled": True, "aliases": ("albi market", "albi")},
+    "maxi": {"name": "Maxi", "website": None, "enabled": True, "aliases": ("maxi",)},
+    "meridian": {
+        "name": "Meridian Express",
+        "website": None,
+        "enabled": True,
+        "aliases": ("meridian express", "meridian"),
+    },
+    "emona": {"name": "Emona Center", "website": None, "enabled": True, "aliases": ("emona center", "emona")},
+    "spar_kosovo": {"name": "SPAR Kosovo", "website": None, "enabled": True, "aliases": ("spar kosovo", "spar")},
 }
 
 # This is a capability declaration, not a claim that every source currently
@@ -65,10 +88,34 @@ SOURCE_STATUS_CONFIG = (
         "status_key": "store_status_interex_partial",
     },
     {
-        "id": "albi",
-        "name": "Albi",
+        "id": "albi_market",
+        "name": "Albi Market",
         "availability": "not_implemented",
         "status_key": "store_status_not_implemented",
+    },
+    {
+        "id": "maxi",
+        "name": "Maxi",
+        "availability": "location_only",
+        "status_key": "store_status_location_only",
+    },
+    {
+        "id": "meridian",
+        "name": "Meridian Express",
+        "availability": "location_only",
+        "status_key": "store_status_location_only",
+    },
+    {
+        "id": "emona",
+        "name": "Emona Center",
+        "availability": "location_only",
+        "status_key": "store_status_location_only",
+    },
+    {
+        "id": "spar_kosovo",
+        "name": "SPAR Kosovo",
+        "availability": "location_only",
+        "status_key": "store_status_location_only",
     },
 )
 

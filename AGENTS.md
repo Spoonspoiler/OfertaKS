@@ -16,6 +16,7 @@ OfertaKS is an offline-first Android-capable Python/Kivy app. It is growing from
 - `ofertaks/services`: sync, basket, history, comparison, and merchant services.
 - `ofertaks/recipes`: recipe and pantry matching.
 - `ofertaks/routing`: distance helpers.
+- `ofertaks/maps`: regional scope, OSM discovery, provider configuration, and map overlay logic.
 - `ofertaks/community`: community observation reasoning.
 - `ofertaks/ui`: Kivy screens and widgets.
 - `tests`: offline unit tests and fixtures.
@@ -56,12 +57,14 @@ SQLite schema lives in `ofertaks/database/schema.py`. Increment `SCHEMA_VERSION`
 - Never hard-code user-facing UI strings; add stable keys to the central localization package.
 - Android-specific paths must use application writable directories from `ofertaks/app/paths.py`.
 - Merchant/place is the fundamental location entity.
+- Initial geographic market is Prishtina and immediate surroundings only. Keep viewport and import queries bounded.
 - Chain is not the fundamental entity; it is an attribute/relationship of merchants and scraper sources.
 - `stores` remains a scraper compatibility table only.
 - Raw scraped data must never be destroyed.
 - Fake production data is forbidden. Fixtures belong only in tests or explicit developer data.
 - Scraping failure must not crash the app.
 - Community observations require provenance, timestamps, confidence, and freshness handling.
+- Basemap tiles and OfertaKS merchant/product overlays are separate. Display OSM attribution and never bulk-prefetch public tiles.
 - Stale prices must be visually marked once exposed in UI.
 - Recommendation algorithms must expose reasoning.
 - Never silently replace an unmatched shopping item or recipe ingredient.
@@ -72,6 +75,7 @@ SQLite schema lives in `ofertaks/database/schema.py`. Increment `SCHEMA_VERSION`
 - Use only publicly available information.
 - Do not bypass authentication, CAPTCHA, bot protection, paywalls, or access restrictions.
 - Use the shared HTTP client for rate limits, retries, timeouts, and conditional headers.
+- OSM discovery must be a single bounded regional request initiated by the user or developer, then served from SQLite during normal map browsing.
 - Prefer JSON, JSON-LD, schema metadata, data attributes, semantic HTML, and stable repeated structures.
 - Avoid brittle `nth-child` selectors.
 - Return `failed` or `partial` honestly when extraction is not possible.

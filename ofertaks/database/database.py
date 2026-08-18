@@ -7,6 +7,7 @@ from pathlib import Path
 from types import TracebackType
 
 from ofertaks.database.schema import (
+    MERCHANT_MIGRATION_COLUMNS,
     OFFER_MIGRATION_COLUMNS,
     POST_MIGRATION_SQL,
     SCHEMA_SQL,
@@ -55,6 +56,7 @@ class Database:
         with self.connect() as connection:
             connection.executescript(SCHEMA_SQL)
             self._migrate_offer_columns(connection)
+            self._migrate_merchant_columns(connection)
             connection.executescript(POST_MIGRATION_SQL)
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
@@ -66,3 +68,12 @@ class Database:
         for column, definition in OFFER_MIGRATION_COLUMNS.items():
             if column not in existing:
                 connection.execute(f"ALTER TABLE offers ADD COLUMN {column} {definition}")
+
+    def _migrate_merchant_columns(self, connection: sqlite3.Connection) -> None:
+        existing = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(merchants)")
+        }
+        for column, definition in MERCHANT_MIGRATION_COLUMNS.items():
+            if column not in existing:
+                connection.execute(f"ALTER TABLE merchants ADD COLUMN {column} {definition}")

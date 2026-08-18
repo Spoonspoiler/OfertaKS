@@ -18,6 +18,11 @@
 - Central localization package with Albanian, English, and French strings.
 - Persistent manual language selection in Settings.
 - Windows development dependencies file with pytest.
+- Prishtina and immediate-surroundings map scope with a configurable OSM-compatible tile provider, visible attribution, viewport-only tile cache, semantic food merchant markers, and a future route-polyline surface.
+- Bounded, user-triggered Overpass importer for real OSM food places with source provenance, raw tags, chain detection, local SQLite caching, and no Kosovo-wide import.
+- Expanded chain registry for ETC, Viva Fresh, Interex, Albi Market, Maxi, Meridian Express, Emona Center, and SPAR Kosovo, with honest location-only or not-implemented price source states.
+- SQLite merchant bounding-box queries, source indexes, conservative duplicate confidence, community place reports, and price-optional merchant product observations.
+- Map-driven local Add place, Add product, and Update price context flows, plus product Search/Product Detail links to Map.
 
 ### Changed
 
@@ -35,4 +40,4 @@
 
 - Android APK generation is configured for GitHub Actions; the first GitHub run still needs to validate the remote build.
 - Community server is documented but not implemented.
-- Map rendering and Android location permissions are intentionally deferred.
+- Map routing remains an interface only, and location permission is not requested until a reliable current-location feature exists.

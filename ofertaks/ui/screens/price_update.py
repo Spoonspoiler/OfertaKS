@@ -5,7 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from ofertaks.localization import t
-from ofertaks.models.community import UserPriceObservation
+from ofertaks.models.community import MerchantProductObservation, UserPriceObservation
+from ofertaks.normalization.product_normalizer import normalize_product_name
 from ofertaks.ui.theme import MUTED, bind_scroll_content_width, make_label, make_screen_layout
 
 try:
@@ -27,6 +28,9 @@ class PriceUpdateScreen(Screen):
         super().__init__(**kwargs)
         self.app = app
         self.offer = None
+        self.context: dict[str, object] = {}
+        self.mode = "update_price"
+        self.return_screen = "product_detail"
         self.origin_source = "USER_OBSERVATION"
         self.origin_confidence = "unknown"
         self.quality = "needs_check"
@@ -34,7 +38,7 @@ class PriceUpdateScreen(Screen):
 
         frame, layout = make_screen_layout()
         back = Button(text=t("back"), size_hint_y=None, height=dp(40))
-        back.bind(on_release=lambda *_: self.app.show_screen("product_detail"))
+        back.bind(on_release=lambda *_: self.app.show_screen(self.return_screen))
         layout.add_widget(back)
         self.back_button = back
         self.title_label = make_label(
@@ -49,8 +53,9 @@ class PriceUpdateScreen(Screen):
         scroll.add_widget(form)
         layout.add_widget(scroll)
 
-        self.product_label = make_label(size_hint_y=None, height=dp(42), bold=True)
+        self.product_label = make_label(text=t("product"), size_hint_y=None, height=dp(24), bold=True)
         form.add_widget(self.product_label)
+        self.product_input = self._add_text_field(form, "product", TextInput)
         self.merchant_input = self._add_text_field(form, "merchant", TextInput)
         self.price_input = self._add_text_field(form, "price", TextInput)
         self.quantity_input = self._add_text_field(form, "quantity", TextInput)
@@ -97,7 +102,7 @@ class PriceUpdateScreen(Screen):
 
     def translate(self) -> None:
         self.back_button.text = t("back")
-        self.title_label.text = t("update_price")
+        self.title_label.text = t("add_product") if self.mode == "add_product" else t("update_price")
         self.save_button.text = t("save_price_update")
         for key, label in self._field_labels.items():
             label.text = t(key)
@@ -128,7 +133,11 @@ class PriceUpdateScreen(Screen):
 
     def set_offer(self, offer) -> None:
         self.offer = offer
-        self.product_label.text = offer.raw_name
+        self.context = {}
+        self.mode = "update_price"
+        self.return_screen = "product_detail"
+        self.product_label.text = t("update_price_for")
+        self.product_input.text = offer.raw_name
         self.merchant_input.text = offer.store_name
         self.price_input.text = f"{offer.offer_price:.2f}"
         self.quantity_input.text = "" if offer.quantity is None else f"{offer.quantity:g}"
@@ -138,6 +147,35 @@ class PriceUpdateScreen(Screen):
         self.photo_input.text = ""
         self.notes_input.text = ""
         self.status_label.text = ""
+        self.translate()
+
+    def set_context(
+        self,
+        *,
+        merchant: dict,
+        product_id: int | None,
+        product_name: str | None,
+        mode: str,
+        return_screen: str,
+    ) -> None:
+        """Preselect map merchant/product context without asking users twice."""
+
+        self.offer = None
+        self.context = {"merchant": merchant, "product_id": product_id}
+        self.mode = mode
+        self.return_screen = return_screen
+        self.product_label.text = t("product")
+        self.product_input.text = product_name or ""
+        self.merchant_input.text = merchant["name"]
+        self.price_input.text = ""
+        self.quantity_input.text = ""
+        self.unit_input.text = ""
+        self.origin_country_input.text = ""
+        self.origin_region_input.text = ""
+        self.photo_input.text = ""
+        self.notes_input.text = ""
+        self.status_label.text = ""
+        self.translate()
 
     def reload(self) -> None:
         if self.offer:
@@ -161,14 +199,18 @@ class PriceUpdateScreen(Screen):
         )
 
     def _save(self) -> None:
-        if not self.offer:
-            return
         merchant_name = self.merchant_input.text.strip()
         if not merchant_name:
             self.status_label.text = t("merchant_required")
             return
+        raw_name = self.product_input.text.strip() or (self.offer.raw_name if self.offer else "")
+        if not raw_name:
+            self.status_label.text = t("product_required")
+            return
+        normalized = normalize_product_name(raw_name)
+        price_text = self.price_input.text.strip()
         try:
-            price = float(self.price_input.text.replace(",", "."))
+            price = float(price_text.replace(",", ".")) if price_text else None
         except ValueError:
             self.status_label.text = t("price_required")
             return
@@ -180,16 +222,50 @@ class PriceUpdateScreen(Screen):
             )
         except ValueError:
             quantity = None
-        if price <= 0:
+        if price is not None and price <= 0:
             self.status_label.text = t("price_required")
             return
-        product_id = self.app.repository.find_product_id_for_offer(self.offer)
+        merchant = self.context.get("merchant") if self.context else None
+        merchant_id = merchant["id"] if merchant else (self.offer.merchant_id if self.offer else None)
+        product_id = self.context.get("product_id") if self.context else None
+        if product_id is None and self.offer:
+            product_id = self.app.repository.find_product_id_for_offer(self.offer)
+        observed_at = datetime.now(UTC)
+        if self.mode == "add_product":
+            if not merchant_id:
+                self.status_label.text = t("merchant_required")
+                return
+            product_id = product_id or self.app.repository.ensure_product(raw_name)
+            self.app.repository.record_merchant_product_observation(
+                MerchantProductObservation(
+                    merchant_id=merchant_id,
+                    product_id=product_id,
+                    raw_name=raw_name,
+                    normalized_name=normalized.normalized_name,
+                    price=price,
+                    quantity=quantity,
+                    unit=self.unit_input.text.strip() or None,
+                    origin_country=self.origin_country_input.text.strip() or None,
+                    origin_region=self.origin_region_input.text.strip() or None,
+                    origin_source=self.origin_source,
+                    origin_confidence=self.origin_confidence,
+                    photo_path=self.photo_input.text.strip() or None,
+                    quality=self.quality,
+                    notes=self.notes_input.text.strip() or None,
+                    observed_at=observed_at,
+                )
+            )
+            self.status_label.text = t("product_observation_saved")
+            return
+        if price is None:
+            self.status_label.text = t("price_required")
+            return
         observation = UserPriceObservation(
             merchant_name=merchant_name,
-            merchant_id=self.offer.merchant_id,
+            merchant_id=merchant_id,
             product_id=product_id,
-            raw_name=self.offer.raw_name,
-            normalized_name=self.offer.normalized_name,
+            raw_name=raw_name,
+            normalized_name=normalized.normalized_name,
             price=price,
             quantity=quantity,
             unit=self.unit_input.text.strip() or None,
@@ -200,7 +276,7 @@ class PriceUpdateScreen(Screen):
             photo_path=self.photo_input.text.strip() or None,
             quality=self.quality,
             notes=self.notes_input.text.strip() or None,
-            observed_at=datetime.now(UTC),
+            observed_at=observed_at,
         )
         self.app.repository.record_user_price_observation(observation)
         self.status_label.text = t("price_update_saved")

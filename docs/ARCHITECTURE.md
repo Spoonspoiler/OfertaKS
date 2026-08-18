@@ -17,6 +17,7 @@ ofertaks/
   services/
   recipes/
   routing/
+  maps/
   community/
   ui/
   utils/
@@ -48,6 +49,18 @@ chain: Viva Fresh
 ```
 
 Offers may initially have `merchant_id = NULL` when a chain-level flyer does not identify a branch. Community prices and local shops should attach to concrete merchants.
+
+## Prishtina Map Scope
+
+The initial active market is `prishtina`: its center, bounding box, default zoom, and discovery radius live in `ofertaks/maps/region.py`. This is intentionally a city-and-immediate-surroundings scope, not a Kosovo-wide index.
+
+```text
+OSM tiles -> configurable basemap provider -> Kivy map surface
+OSM bounded importer -> SQLite merchants -> OfertaKS map overlay
+community / scraper evidence -> SQLite observations -> price, origin, quality, freshness card
+```
+
+The basemap is not OfertaKS data. The overlay owns merchant provenance, optional product evidence, price history, origin, quality, reports, and future routes. Normal browsing queries SQLite by viewport; the OSM importer is a single user-triggered bounded request and can move to a server importer later. Only identical source IDs are automatically updated; other potential duplicates retain a confidence decision for review.
 
 ## Local Decision Engine
 

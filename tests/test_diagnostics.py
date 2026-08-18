@@ -41,9 +41,9 @@ class DiagnosticsSummaryTests(TestCase):
         )
         summary = self.repo.diagnostics_summary()
         statuses = {item["id"]: item for item in summary["last_scraper_runs"]}
-        self.assertEqual(summary["store_count"], 4)
+        self.assertEqual(summary["store_count"], 8)
         self.assertEqual(summary["live_store_count"], 1)
         self.assertEqual(summary["food_offer_count"], 1)
         self.assertEqual(statuses["etc"]["availability"], "live")
-        self.assertEqual(statuses["albi"]["availability"], "not_implemented")
+        self.assertEqual(statuses["albi_market"]["availability"], "not_implemented")
         self.assertTrue(summary["database_writable"])

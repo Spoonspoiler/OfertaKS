@@ -41,6 +41,13 @@ def get_debug_scrape_dir() -> Path:
     return get_cache_dir() / "debug_scrapes"
 
 
+def get_map_cache_dir() -> Path:
+    """Return the Android-writable cache for OSM responses and viewed tiles."""
+
+    return get_cache_dir() / "map"
+
+
 def ensure_app_dirs() -> None:
     get_app_data_dir().mkdir(parents=True, exist_ok=True)
     get_cache_dir().mkdir(parents=True, exist_ok=True)
+    get_map_cache_dir().mkdir(parents=True, exist_ok=True)

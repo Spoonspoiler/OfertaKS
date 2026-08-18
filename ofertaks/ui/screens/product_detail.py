@@ -95,6 +95,8 @@ class ProductDetailScreen(Screen):
         self.graph = graph_wrapper.widget
         self.update_button = Button(text=t("update_price"), size_hint_y=None, height=dp(46))
         self.update_button.bind(on_release=lambda *_: self._open_price_update())
+        self.map_button = Button(text=t("show_on_map"), size_hint_y=None, height=dp(42))
+        self.map_button.bind(on_release=lambda *_: self._show_on_map())
         for widget in (
             self.title,
             self.subtitle,
@@ -109,6 +111,7 @@ class ProductDetailScreen(Screen):
             self.history_explanation,
             self.graph,
             self.update_button,
+            self.map_button,
         ):
             content.add_widget(widget)
         self.add_widget(frame)
@@ -120,6 +123,7 @@ class ProductDetailScreen(Screen):
         self.origin_heading.text = t("origin")
         self.history_label.text = t("price_history")
         self.update_button.text = t("update_price")
+        self.map_button.text = t("show_on_map")
 
     def set_offer(self, offer) -> None:
         self.offer = offer
@@ -185,3 +189,12 @@ class ProductDetailScreen(Screen):
         update = self.app.screens["price_update"]
         update.set_offer(self.offer)
         self.app.show_screen("price_update")
+
+    def _show_on_map(self) -> None:
+        if not self.offer:
+            return
+        self.app.show_map(
+            product_id=self.app.repository.find_product_id_for_offer(self.offer),
+            product_name=self.offer.raw_name,
+            merchant_id=self.offer.merchant_id,
+        )

@@ -8,6 +8,7 @@ from typing import Any
 
 SUPERMARKET = "SUPERMARKET"
 GROCERY = "GROCERY"
+CONVENIENCE = "CONVENIENCE"
 MARKET = "MARKET"
 MARKET_STALL = "MARKET_STALL"
 FRUIT_VEGETABLE = "FRUIT_VEGETABLE"
@@ -15,13 +16,17 @@ BUTCHER = "BUTCHER"
 BAKERY = "BAKERY"
 DAIRY = "DAIRY"
 FISH = "FISH"
-FARMER = "FARMER"
+FARM = "FARM"
+FARMER = "FARMER"  # Legacy persisted value retained for existing local databases.
+SPECIALTY_FOOD = "SPECIALTY_FOOD"
 STREET_VENDOR = "STREET_VENDOR"
-OTHER = "OTHER"
+OTHER_FOOD = "OTHER_FOOD"
+OTHER = "OTHER"  # Legacy persisted value retained for existing local databases.
 
 MERCHANT_TYPES = {
     SUPERMARKET,
     GROCERY,
+    CONVENIENCE,
     MARKET,
     MARKET_STALL,
     FRUIT_VEGETABLE,
@@ -29,10 +34,25 @@ MERCHANT_TYPES = {
     BAKERY,
     DAIRY,
     FISH,
+    FARM,
     FARMER,
+    SPECIALTY_FOOD,
     STREET_VENDOR,
+    OTHER_FOOD,
     OTHER,
 }
+
+SOURCE_OSM = "OSM"
+SOURCE_CHAIN_OFFICIAL = "CHAIN_OFFICIAL"
+SOURCE_COMMUNITY = "COMMUNITY"
+SOURCE_MERCHANT = "MERCHANT"
+SOURCE_ADMIN = "ADMIN"
+
+COMMUNITY_UNVERIFIED = "COMMUNITY_UNVERIFIED"
+COMMUNITY_CONFIRMED = "COMMUNITY_CONFIRMED"
+MERCHANT_VERIFIED = "MERCHANT_VERIFIED"
+ADMIN_VERIFIED = "ADMIN_VERIFIED"
+CLOSED_REPORTED = "CLOSED_REPORTED"
 
 
 @dataclass(slots=True)
@@ -64,6 +84,16 @@ class Merchant:
     community_added: bool = False
     claimed_by_merchant: bool = False
     verification_status: str = "unverified"
+    source_type: str = "UNKNOWN"
+    source_id: str | None = None
+    osm_type: str | None = None
+    osm_id: str | None = None
+    osm_tags: dict[str, Any] | None = None
+    source_last_seen_at: datetime | None = None
+    merchant_last_verified_at: datetime | None = None
+    description: str | None = None
+    photo_path: str | None = None
+    community_status: str = "NOT_COMMUNITY"
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

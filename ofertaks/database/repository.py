@@ -7,10 +7,16 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import Any, Iterable
 
-from ofertaks.app.config import SOURCE_STATUS_CONFIG, STORE_CONFIG
+from ofertaks.app.config import CHAIN_CONFIG, SOURCE_STATUS_CONFIG, STORE_CONFIG
 from ofertaks.app.smoke import app_smoke_check
 from ofertaks.database.database import Database
-from ofertaks.models.community import OriginObservation, QualityObservation, UserPriceObservation
+from ofertaks.models.community import (
+    MerchantProductObservation,
+    MerchantReport,
+    OriginObservation,
+    QualityObservation,
+    UserPriceObservation,
+)
 from ofertaks.models.merchant import Chain, Merchant
 from ofertaks.models.offer import Offer
 from ofertaks.models.recipe import Recipe, RecipeIngredient
@@ -44,7 +50,7 @@ class Repository:
     def seed_chains(self) -> None:
         now = self._now()
         with self.database.connect() as db:
-            for chain_id, data in STORE_CONFIG.items():
+            for chain_id, data in CHAIN_CONFIG.items():
                 db.execute(
                     """
                     INSERT INTO chains (id, name, website, enabled, created_at, updated_at)
@@ -341,6 +347,42 @@ class Repository:
             ).fetchone()
             return int(row["id"]) if row else None
 
+    def product_category(self, product_id: int) -> str | None:
+        with self.database.connect() as db:
+            row = db.execute("SELECT category FROM products WHERE id = ?", (product_id,)).fetchone()
+            return row["category"] if row else None
+
+    def ensure_product(self, raw_name: str) -> int:
+        """Create or reuse a canonical product for a local merchant observation."""
+
+        canonical = normalize_product_name(raw_name)
+        canonical_name = canonical.normalized_name or raw_name.casefold().strip()
+        with self.database.connect() as db:
+            db.execute(
+                """
+                INSERT OR IGNORE INTO products (canonical_name, brand, quantity, unit, category)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    canonical_name,
+                    canonical.brand,
+                    canonical.quantity,
+                    canonical.unit,
+                    canonical.category,
+                ),
+            )
+            row = db.execute(
+                """
+                SELECT id FROM products
+                WHERE canonical_name = ?
+                  AND COALESCE(brand, '') = COALESCE(?, '')
+                  AND COALESCE(quantity, -1) = COALESCE(?, -1)
+                  AND COALESCE(unit, '') = COALESCE(?, '')
+                """,
+                (canonical_name, canonical.brand, canonical.quantity, canonical.unit),
+            ).fetchone()
+            return int(row["id"])
+
     def offers_for_product(
         self,
         product_id: int,
@@ -520,9 +562,11 @@ class Repository:
                     id, name, merchant_type, chain_id, latitude, longitude,
                     address, city, neighborhood, phone, website, opening_hours_json,
                     payment_cash, payment_card, community_added, claimed_by_merchant,
-                    verification_status, created_at, updated_at
+                    verification_status, source_type, source_id, osm_type, osm_id,
+                    osm_tags_json, source_last_seen_at, merchant_last_verified_at,
+                    description, photo_path, community_status, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     name=excluded.name,
                     merchant_type=excluded.merchant_type,
@@ -540,6 +584,16 @@ class Repository:
                     community_added=excluded.community_added,
                     claimed_by_merchant=excluded.claimed_by_merchant,
                     verification_status=excluded.verification_status,
+                    source_type=excluded.source_type,
+                    source_id=excluded.source_id,
+                    osm_type=excluded.osm_type,
+                    osm_id=excluded.osm_id,
+                    osm_tags_json=excluded.osm_tags_json,
+                    source_last_seen_at=excluded.source_last_seen_at,
+                    merchant_last_verified_at=excluded.merchant_last_verified_at,
+                    description=excluded.description,
+                    photo_path=excluded.photo_path,
+                    community_status=excluded.community_status,
                     updated_at=excluded.updated_at
                 """,
                 (
@@ -560,6 +614,16 @@ class Repository:
                     int(merchant.community_added),
                     int(merchant.claimed_by_merchant),
                     merchant.verification_status,
+                    merchant.source_type,
+                    merchant.source_id,
+                    merchant.osm_type,
+                    merchant.osm_id,
+                    json.dumps(merchant.osm_tags) if merchant.osm_tags else None,
+                    self._timestamp(merchant.source_last_seen_at),
+                    self._timestamp(merchant.merchant_last_verified_at),
+                    merchant.description,
+                    merchant.photo_path,
+                    merchant.community_status,
                     created,
                     updated,
                 ),
@@ -569,6 +633,45 @@ class Repository:
     def list_merchants(self) -> list[dict[str, Any]]:
         with self.database.connect() as db:
             return [dict(row) for row in db.execute("SELECT * FROM merchants ORDER BY name")]
+
+    def get_merchant(self, merchant_id: str) -> dict[str, Any] | None:
+        with self.database.connect() as db:
+            row = db.execute("SELECT * FROM merchants WHERE id = ?", (merchant_id,)).fetchone()
+            return dict(row) if row else None
+
+    def get_merchant_by_source(self, source_type: str, source_id: str) -> dict[str, Any] | None:
+        with self.database.connect() as db:
+            row = db.execute(
+                "SELECT * FROM merchants WHERE source_type = ? AND source_id = ? LIMIT 1",
+                (source_type, source_id),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def find_merchants_in_bbox(
+        self,
+        min_lat: float,
+        min_lon: float,
+        max_lat: float,
+        max_lon: float,
+        merchant_types: tuple[str, ...] | list[str] | None = None,
+        limit: int = 80,
+    ) -> list[dict[str, Any]]:
+        """Return cached merchants in an inclusive map viewport query."""
+
+        where = ["latitude >= ?", "latitude <= ?", "longitude >= ?", "longitude <= ?"]
+        params: list[Any] = [min_lat, max_lat, min_lon, max_lon]
+        if merchant_types:
+            where.append(f"merchant_type IN ({','.join('?' for _ in merchant_types)})")
+            params.extend(merchant_types)
+        params.append(limit)
+        sql = f"""
+            SELECT * FROM merchants
+            WHERE {' AND '.join(where)}
+            ORDER BY CASE WHEN community_added = 1 THEN 0 ELSE 1 END, name
+            LIMIT ?
+        """
+        with self.database.connect() as db:
+            return [dict(row) for row in db.execute(sql, params)]
 
     def add_pantry_item(
         self,
@@ -865,6 +968,118 @@ class Repository:
         with self.database.connect() as db:
             return [dict(row) for row in db.execute(sql, params)]
 
+    def record_merchant_product_observation(self, observation: MerchantProductObservation) -> int:
+        """Store local product evidence for a place, with price intentionally optional."""
+
+        if not observation.merchant_id:
+            raise ValueError("A merchant is required")
+        if not observation.raw_name.strip():
+            raise ValueError("A product name is required")
+        if observation.price is not None and observation.price <= 0:
+            raise ValueError("Price observations must be greater than zero")
+        with self.database.connect() as db:
+            cursor = db.execute(
+                """
+                INSERT INTO merchant_product_observations (
+                    product_id, merchant_id, raw_name, normalized_name, price, quantity, unit,
+                    origin_country, origin_region, origin_source, origin_confidence, photo_path,
+                    quality, notes, observed_at, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    observation.product_id,
+                    observation.merchant_id,
+                    observation.raw_name.strip(),
+                    observation.normalized_name,
+                    observation.price,
+                    observation.quantity,
+                    observation.unit or None,
+                    observation.origin_country or None,
+                    observation.origin_region or None,
+                    observation.origin_source.upper(),
+                    observation.origin_confidence.casefold(),
+                    observation.photo_path or None,
+                    observation.quality or None,
+                    observation.notes or None,
+                    observation.observed_at.isoformat(timespec="seconds"),
+                    self._now(),
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def latest_product_evidence(self, product_id: int) -> dict[str, dict[str, Any]]:
+        """Return the newest known observation per merchant for map product mode."""
+
+        sql = """
+            SELECT merchant_id, product_id, raw_name, normalized_name, price, quantity, unit,
+                   origin_country, origin_region, origin_source, origin_confidence, photo_path,
+                   quality, notes, observed_at, 'user_price' AS evidence_type
+            FROM user_price_observations
+            WHERE product_id = ? AND merchant_id IS NOT NULL
+            UNION ALL
+            SELECT merchant_id, product_id, raw_name, normalized_name, price, quantity, unit,
+                   origin_country, origin_region, origin_source, origin_confidence, photo_path,
+                   quality, notes, observed_at, 'merchant_product' AS evidence_type
+            FROM merchant_product_observations
+            WHERE product_id = ?
+            ORDER BY observed_at DESC, evidence_type ASC
+        """
+        newest: dict[str, dict[str, Any]] = {}
+        with self.database.connect() as db:
+            for row in db.execute(sql, (product_id, product_id)):
+                item = dict(row)
+                newest.setdefault(item["merchant_id"], item)
+        return newest
+
+    def list_merchant_product_observations(
+        self, product_id: int | None = None, merchant_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        where: list[str] = []
+        params: list[Any] = []
+        if product_id is not None:
+            where.append("product_id = ?")
+            params.append(product_id)
+        if merchant_id is not None:
+            where.append("merchant_id = ?")
+            params.append(merchant_id)
+        sql = "SELECT * FROM merchant_product_observations"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY observed_at DESC, id DESC"
+        with self.database.connect() as db:
+            return [dict(row) for row in db.execute(sql, params)]
+
+    def record_merchant_report(self, report: MerchantReport) -> int:
+        """Keep community place reports locally pending a future server workflow."""
+
+        if not report.merchant_id or not report.report_type:
+            raise ValueError("Merchant and report type are required")
+        with self.database.connect() as db:
+            cursor = db.execute(
+                """
+                INSERT INTO merchant_reports (merchant_id, report_type, notes, reported_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    report.merchant_id,
+                    report.report_type,
+                    report.notes or None,
+                    report.reported_at.isoformat(timespec="seconds"),
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def list_merchant_reports(self, merchant_id: str) -> list[dict[str, Any]]:
+        with self.database.connect() as db:
+            return [
+                dict(row)
+                for row in db.execute(
+                    "SELECT * FROM merchant_reports WHERE merchant_id = ? ORDER BY reported_at DESC",
+                    (merchant_id,),
+                )
+            ]
+
     def set_preference(self, key: str, value: Any) -> None:
         with self.database.connect() as db:
             db.execute(
@@ -893,6 +1108,9 @@ class Repository:
 
     def _now(self) -> str:
         return datetime.now(UTC).isoformat(timespec="seconds")
+
+    def _timestamp(self, value: datetime | None) -> str | None:
+        return value.isoformat(timespec="seconds") if value else None
 
     def _optional_bool(self, value: bool | None) -> int | None:
         return None if value is None else int(value)

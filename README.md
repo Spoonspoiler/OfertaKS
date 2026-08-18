@@ -96,6 +96,12 @@ OfertaKS treats concrete merchants/places as the fundamental location entity. Ch
 - additional recipe cost from cached offers
 - freshness, quality, and origin provenance helpers for future community observations
 
+## Prishtina Food Map
+
+The first geographic market is Prishtina and its immediate surroundings. `Map` is a primary navigation surface: it uses an OSM-compatible, on-demand tile provider for geographic context and SQLite for OfertaKS merchant, product, price, origin, quality, and freshness data. The map works from cached merchant data when offline; tiles are requested only for the visible viewport and retain visible `© OpenStreetMap contributors` attribution.
+
+Food-place discovery is a user-triggered, one-request bounded Overpass import for the configured Prishtina region. It supports real OSM food places such as supermarkets, groceries, greengrocers, markets, bakeries, butchers, fish shops, farms, and specialty food shops. It does not import all Kosovo or fabricate stores. Chain locations and price-source capability are intentionally distinct: ETC is live, Viva Fresh and Interex are partial, while Albi Market, Maxi, Meridian Express, Emona Center, and SPAR Kosovo are location-only or not yet automated.
+
 ## Scraper Maintenance
 
 Add a new supermarket by implementing `BaseScraper` and registering it in `ofertaks/scrapers/registry.py`.
@@ -139,3 +145,5 @@ Before significant work, inspect status/history/diff. After meaningful changes, 
 ## Known MVP Limits
 
 OCR is intentionally not implemented. Image-only flyers remain visible in diagnostics as partial scraper results until an OCR path is added. Background Android WorkManager sync is also deferred; refresh runs on app launch policy or user action and uses worker threads so the UI remains responsive.
+
+Map routing is only an interface and route-polyline capability; no production navigation provider or GPS permission is included yet. Community places and product observations remain local until an explicit server sync is implemented.

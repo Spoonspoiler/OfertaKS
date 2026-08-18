@@ -28,3 +28,10 @@ class AndroidConfigTests(TestCase):
     def test_android_architecture_targets_current_phones(self):
         archs = {item.strip() for item in self.app["android.archs"].split(",")}
         self.assertIn("arm64-v8a", archs)
+
+    def test_native_map_uses_existing_android_safe_runtime_dependencies(self):
+        requirements = {item.strip() for item in self.app["requirements"].split(",")}
+        runtime = set(Path("requirements.txt").read_text(encoding="utf-8").splitlines())
+        self.assertTrue({"kivy", "requests"}.issubset(requirements))
+        self.assertTrue({"kivy", "requests"}.issubset(runtime))
+        self.assertNotIn("ACCESS_FINE_LOCATION", self.app["android.permissions"])

@@ -26,6 +26,17 @@ class DuplicateMerchantCandidate:
     reason: str
 
 
+@dataclass(slots=True)
+class MerchantMatch:
+    """A conservative duplicate decision; callers merge only EXACT matches."""
+
+    confidence: str
+    merchant: dict | None
+    distance_km: float | None
+    name_similarity: float | None
+    reason: str
+
+
 class MerchantService:
     def __init__(self, repository: Repository):
         self.repository = repository
@@ -88,3 +99,56 @@ class MerchantService:
                     )
                 )
         return sorted(candidates, key=lambda item: item.score, reverse=True)
+
+    def match(self, candidate: Merchant) -> MerchantMatch:
+        """Classify a possible duplicate without modifying either merchant.
+
+        An identical provenance identifier is the only source-level automatic
+        merge key. Name and distance are deliberately advisory for community
+        and OSM imports so nearby independent shops are never overwritten.
+        """
+
+        candidates = self.repository.list_merchants()
+        for merchant in candidates:
+            if merchant["id"] == candidate.id:
+                continue
+            if (
+                candidate.source_id
+                and merchant.get("source_type") == candidate.source_type
+                and merchant.get("source_id") == candidate.source_id
+            ):
+                return MerchantMatch("EXACT", merchant, 0.0, 1.0, "same source identifier")
+
+        candidate_name = comparable_text(candidate.name)
+        best: MerchantMatch | None = None
+        for merchant in candidates:
+            if merchant["id"] == candidate.id:
+                continue
+            distance = haversine_km(
+                candidate.latitude, candidate.longitude, merchant["latitude"], merchant["longitude"]
+            )
+            if distance > 3.0:
+                continue
+            similarity = SequenceMatcher(
+                None, candidate_name, comparable_text(merchant["name"])
+            ).ratio()
+            same_chain = bool(candidate.chain_id and candidate.chain_id == merchant.get("chain_id"))
+            if distance <= 0.03 and (similarity >= 0.92 or same_chain):
+                confidence = "EXACT"
+            elif distance <= 0.15 and ((same_chain and similarity >= 0.60) or similarity >= 0.85):
+                confidence = "LIKELY"
+            elif distance <= 0.40 and similarity >= 0.65:
+                confidence = "POSSIBLE"
+            else:
+                continue
+            result = MerchantMatch(
+                confidence,
+                merchant,
+                round(distance, 4),
+                round(similarity, 3),
+                f"{distance * 1000:.0f} m away; name similarity {similarity:.0%}",
+            )
+            rank = {"EXACT": 3, "LIKELY": 2, "POSSIBLE": 1}[confidence]
+            if best is None or rank > {"EXACT": 3, "LIKELY": 2, "POSSIBLE": 1}[best.confidence]:
+                best = result
+        return best or MerchantMatch("NO_MATCH", None, None, None, "no safe duplicate candidate")

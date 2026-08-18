@@ -23,3 +23,10 @@
 - Store/source capability is explicit in Stores and Settings: ETC is live, Viva Fresh is partial/image-based, Interex is partial/PDF metadata, and Albi is not implemented. These labels do not fabricate unsupported offers.
 - Settings now renders a compact diagnostic summary first and leaves raw JSON behind an explicit secondary action.
 - Added a local user price-update form with optional evidence-path and quality fields. It writes a `user_price_observations` row and records supplied origin as separate provenance evidence; no community sync or camera capture is implied.
+- Added the first Prishtina-only food merchant map vertical slice. The configurable market region is intentionally bounded to the city and nearby commercial areas; it does not download a Kosovo-wide map or POI database.
+- Added an OSM-compatible Kivy map surface with a configurable provider, on-demand viewport tile cache, visible OpenStreetMap attribution, semantic merchant markers, pan/zoom controls, marker cards, and a future route-polyline surface.
+- Added one-request, user-triggered Overpass discovery for food-relevant OSM tags. Imported data preserves OSM type, ID, raw tags, source timestamps, and detected known-chain metadata; normal browsing reads SQLite instead of querying Overpass.
+- Expanded the chain registry to ETC, Viva Fresh, Interex, Albi Market, Maxi, Meridian Express, Emona Center, and SPAR Kosovo while keeping price-source capability transparent rather than fabricating offers.
+- Added SQLite bounding-box queries, source indexes, conservative duplicate confidence, local community place reports, and price-optional product observations for merchant cards and product map searches.
+- Product search and product detail can now open the Map with the product context. Current, stale, and unknown availability states are evidence-based and category freshness-aware.
+- Added local Add place and Add product map flows. Community places start `COMMUNITY_UNVERIFIED`; submissions are local and a future sync protocol is only a boundary, not a claimed backend.
