@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Iterable
 
 from ofertaks.app.config import STORE_CONFIG
@@ -47,7 +47,7 @@ class Repository:
             db.execute("UPDATE stores SET enabled = ? WHERE id = ?", (int(enabled), store_id))
 
     def start_scrape_run(self, store_id: str) -> int:
-        now = datetime.utcnow().isoformat(timespec="seconds")
+        now = datetime.now(UTC).isoformat(timespec="seconds")
         with self.database.connect() as db:
             cursor = db.execute(
                 "INSERT INTO scrape_runs (store_id, started_at, status) VALUES (?, ?, ?)",
@@ -62,7 +62,7 @@ class Repository:
         items_found: int,
         error_message: str | None = None,
     ) -> None:
-        now = datetime.utcnow().isoformat(timespec="seconds")
+        now = datetime.now(UTC).isoformat(timespec="seconds")
         with self.database.connect() as db:
             db.execute(
                 """
@@ -144,6 +144,15 @@ class Repository:
                 )
                 """,
                 offer.to_record(),
+            )
+            db.execute(
+                """
+                INSERT OR IGNORE INTO product_aliases (
+                    product_id, store_id, raw_name, normalized_name
+                )
+                VALUES (?, ?, ?, ?)
+                """,
+                (product_id, offer.store_id, offer.raw_name, offer.normalized_name),
             )
             db.execute(
                 """
@@ -275,7 +284,7 @@ class Repository:
         with self.database.connect() as db:
             db.execute(
                 "INSERT INTO basket_items (query, quantity, created_at) VALUES (?, ?, ?)",
-                (query, quantity, datetime.utcnow().isoformat(timespec="seconds")),
+                (query, quantity, datetime.now(UTC).isoformat(timespec="seconds")),
             )
 
     def list_basket_items(self) -> list[dict[str, Any]]:
@@ -316,9 +325,10 @@ class Repository:
                     """
                 )
             ]
-            counts = dict(
-                db.execute(
+            counts = {
+                row["store_id"]: row["count"]
+                for row in db.execute(
                     "SELECT store_id, COUNT(*) AS count FROM offers GROUP BY store_id"
-                ).fetchall()
-            )
+                )
+            }
         return {"stores": stores, "last_runs": runs, "offer_counts": counts}

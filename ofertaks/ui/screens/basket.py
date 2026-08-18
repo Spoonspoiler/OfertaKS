@@ -5,17 +5,22 @@ from __future__ import annotations
 from ofertaks.app.localization import t
 from ofertaks.services.basket_service import BasketService
 
+try:
+    from kivy.uix.screenmanager import Screen
+except Exception:  # pragma: no cover
+    class Screen:  # type: ignore[no-redef]
+        pass
 
-class BasketScreen:
+
+class BasketScreen(Screen):
     def __init__(self, app, **kwargs):
         from kivy.metrics import dp
         from kivy.uix.boxlayout import BoxLayout
         from kivy.uix.button import Button
         from kivy.uix.label import Label
-        from kivy.uix.screenmanager import Screen
         from kivy.uix.textinput import TextInput
 
-        Screen.__init__(self, **kwargs)
+        super().__init__(**kwargs)
         self.app = app
         layout = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(8))
         layout.add_widget(Label(text=t("basket"), size_hint_y=None, height=dp(36), bold=True, font_size="22sp"))

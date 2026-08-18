@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +26,7 @@ def configure_logging() -> Path:
 def log_event(logger: logging.Logger, event: str, **fields: Any) -> None:
     payload = {
         "event": event,
-        "at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "at": datetime.now(UTC).isoformat(timespec="seconds"),
         **fields,
     }
     logger.info(json.dumps(payload, ensure_ascii=False, sort_keys=True))

@@ -6,16 +6,21 @@ from ofertaks.app.localization import t
 from ofertaks.ui.widgets.offer_card import OfferCardMixin
 from ofertaks.ui.widgets.search_bar import build_search_bar
 
+try:
+    from kivy.uix.screenmanager import Screen
+except Exception:  # pragma: no cover
+    class Screen:  # type: ignore[no-redef]
+        pass
 
-class SearchScreen(OfferCardMixin):
+
+class SearchScreen(Screen, OfferCardMixin):
     def __init__(self, app, **kwargs):
         from kivy.metrics import dp
         from kivy.uix.boxlayout import BoxLayout
         from kivy.uix.label import Label
-        from kivy.uix.screenmanager import Screen
         from kivy.uix.scrollview import ScrollView
 
-        Screen.__init__(self, **kwargs)
+        super().__init__(**kwargs)
         self.app = app
         self.query = ""
         layout = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(8))

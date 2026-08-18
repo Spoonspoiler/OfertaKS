@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -94,7 +94,7 @@ class BaseScraper:
             category=category or normalized.category,
             source_url=source_url,
             image_url=image_url,
-            scraped_at=scraped_at or datetime.utcnow(),
+            scraped_at=scraped_at or datetime.now(UTC),
         )
 
     def save_debug_file(self, name: str, content: bytes | str) -> None:

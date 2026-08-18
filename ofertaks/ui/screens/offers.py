@@ -5,17 +5,22 @@ from __future__ import annotations
 from ofertaks.app.localization import t
 from ofertaks.ui.widgets.offer_card import OfferCardMixin
 
+try:
+    from kivy.uix.screenmanager import Screen
+except Exception:  # pragma: no cover
+    class Screen:  # type: ignore[no-redef]
+        pass
 
-class OffersScreen(OfferCardMixin):
+
+class OffersScreen(Screen, OfferCardMixin):
     def __init__(self, app, **kwargs):
         from kivy.metrics import dp
         from kivy.uix.boxlayout import BoxLayout
         from kivy.uix.label import Label
-        from kivy.uix.screenmanager import Screen
         from kivy.uix.scrollview import ScrollView
         from kivy.uix.spinner import Spinner
 
-        Screen.__init__(self, **kwargs)
+        super().__init__(**kwargs)
         self.app = app
         layout = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(8))
         layout.add_widget(Label(text=t("offers"), size_hint_y=None, height=dp(36), bold=True, font_size="22sp"))

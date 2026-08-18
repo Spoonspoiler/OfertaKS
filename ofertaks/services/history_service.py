@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from statistics import mean
 
 from ofertaks.database.repository import Repository
@@ -31,14 +31,14 @@ class HistoryService:
     def stats_for_product(self, product_id: int) -> HistoryStats:
         rows = self.repository.price_history(product_id)
         prices = [float(row["price"]) for row in rows]
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
 
         def recent_average(days: int) -> float | None:
             cutoff = now - timedelta(days=days)
             recent = [
                 float(row["price"])
                 for row in rows
-                if datetime.fromisoformat(row["observed_at"]) >= cutoff
+                if self._observed_at(row["observed_at"]) >= cutoff
             ]
             return round(mean(recent), 2) if recent else None
 
@@ -51,3 +51,9 @@ class HistoryService:
             average_30d=recent_average(30),
             average_90d=recent_average(90),
         )
+
+    def _observed_at(self, value: str) -> datetime:
+        parsed = datetime.fromisoformat(value)
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=UTC)
+        return parsed

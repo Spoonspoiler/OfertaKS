@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from ofertaks.app.config import get_data_dir
 from ofertaks.app.localization import t
 from ofertaks.services.sync_service import SyncService
 
+os.environ.setdefault("KIVY_HOME", str(get_data_dir() / "kivy"))
 
 try:
     from kivy.app import App
@@ -29,7 +31,7 @@ class OfertaKSApp(App if App is not None else object):
     def __init__(self, repository, **kwargs):
         if App is None:
             raise RuntimeError(
-                "Kivy is not installed. Install requirements.txt before running the UI."
+                f"Kivy could not start. Install requirements.txt and ensure KIVY_HOME is writable: {KIVY_IMPORT_ERROR}"
             ) from KIVY_IMPORT_ERROR
         super().__init__(**kwargs)
         self.repository = repository

@@ -5,6 +5,12 @@ from __future__ import annotations
 from ofertaks.app.localization import t
 from ofertaks.parsing.unit_parser import format_quantity, format_unit_price
 
+try:
+    from kivy.uix.screenmanager import Screen
+except Exception:  # pragma: no cover
+    class Screen:  # type: ignore[no-redef]
+        pass
+
 
 class PriceHistoryGraph:
     def __init__(self, **kwargs):
@@ -42,15 +48,14 @@ class PriceHistoryGraph:
         self.widget = _Graph(**kwargs)
 
 
-class ProductDetailScreen:
+class ProductDetailScreen(Screen):
     def __init__(self, app, **kwargs):
         from kivy.metrics import dp
         from kivy.uix.boxlayout import BoxLayout
         from kivy.uix.button import Button
         from kivy.uix.label import Label
-        from kivy.uix.screenmanager import Screen
 
-        Screen.__init__(self, **kwargs)
+        super().__init__(**kwargs)
         self.app = app
         self.offer = None
         layout = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(8))

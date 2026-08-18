@@ -109,10 +109,13 @@ class ETCScraper(BaseScraper):
         return lowered not in blocked
 
     def _nearby_text(self, heading) -> str:
-        parent = heading.find_parent(["article", "li", "div", "section"]) or heading.parent
-        if parent:
-            text = text_of(parent)
-            if "€" in text or "eur" in text.casefold():
+        node = heading
+        for _ in range(4):
+            node = node.parent if node is not None else None
+            if node is None:
+                break
+            text = text_of(node)
+            if extract_prices(text):
                 return text
         chunks = [text_of(heading)]
         sibling = heading.find_next_sibling()

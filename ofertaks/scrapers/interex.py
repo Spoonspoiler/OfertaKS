@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import date
 from urllib.parse import urljoin
 
@@ -74,7 +74,7 @@ class InterexScraper(BaseScraper):
             status,
             offers,
             error_message=error,
-            metadata={"flyers": [f.__dict__ for f in flyers], "extraction": extraction_statuses},
+            metadata={"flyers": [asdict(f) for f in flyers], "extraction": extraction_statuses},
         )
 
     def parse_flyer_index(self, soup, base_url: str) -> list[Flyer]:

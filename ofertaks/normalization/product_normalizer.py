@@ -71,7 +71,7 @@ def _remove_quantity_fragments(text: str) -> str:
 
 def normalize_product_name(raw_name: str, raw_category: str | None = None) -> NormalizedProduct:
     comparable = comparable_text(raw_name)
-    quantity = parse_quantity(comparable)
+    quantity = parse_quantity(raw_name)
     without_quantity = _remove_quantity_fragments(comparable)
     brand = detect_brand(raw_name)
     brand_words = set(comparable_text(brand).split()) if brand else set()

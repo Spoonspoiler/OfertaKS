@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from ofertaks.utils.text import comparable_text
+from ofertaks.utils.text import clean_text, strip_accents
 
 
 @dataclass(slots=True)
@@ -56,7 +56,7 @@ def _canonical(quantity: float, unit: str) -> tuple[float, str]:
 
 
 def parse_quantity(text: str) -> ParsedQuantity | None:
-    normalized = comparable_text(text).replace("×", "x")
+    normalized = strip_accents(clean_text(text).casefold()).replace("×", "x")
 
     match = MULTIPACK_RE.search(normalized)
     if match:

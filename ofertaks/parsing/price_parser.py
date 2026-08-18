@@ -15,9 +15,10 @@ class ParsedPrice:
     raw: str
 
 
+CURRENCY = r"(?:€|eur|\ufffd)"
 NUMBER = r"(?:\d{1,3}(?:[ .]\d{3})+|\d+)(?:[,.]\d{1,2})?"
 PRICE_WITH_CURRENCY_RE = re.compile(
-    rf"(?:(?:€|eur)\s*({NUMBER})|({NUMBER})\s*(?:€|eur))",
+    rf"(?:(?:{CURRENCY})\s*({NUMBER})|({NUMBER})\s*(?:{CURRENCY}))",
     re.IGNORECASE,
 )
 DECIMAL_RE = re.compile(r"(?<!\d)(\d{1,4}[,.]\d{1,2})(?!\d)")
