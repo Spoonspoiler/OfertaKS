@@ -56,7 +56,7 @@ class HTTPClient:
                     return HTTPResponse(
                         url=response.url,
                         status_code=response.status_code,
-                        text=response.text,
+                        text=self._response_text(response),
                         content=response.content,
                         headers=dict(response.headers),
                     )
@@ -66,6 +66,24 @@ class HTTPClient:
                         break
                     time.sleep(0.8 * (2**attempt))
             raise RuntimeError(f"GET failed for {url}: {last_exc}") from last_exc
+
+    @staticmethod
+    def _response_text(response: Any) -> str:
+        """Decode only text-like responses.
+
+        Accessing ``requests.Response.text`` triggers charset detection when a
+        server does not declare an encoding. That is useful for product pages,
+        but it produces noisy diagnostics for binary map PNG files.
+        """
+
+        content_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip().casefold()
+        if content_type.startswith("image/") or content_type in {
+            "application/octet-stream",
+            "application/pdf",
+            "application/zip",
+        }:
+            return ""
+        return response.text
 
     def _respect_host_delay(self, url: str) -> None:
         host = urlparse(url).netloc

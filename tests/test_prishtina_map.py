@@ -8,6 +8,7 @@ import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import TestCase
+from unittest.mock import patch
 
 from ofertaks.database.database import Database
 from ofertaks.database.repository import Repository
@@ -260,18 +261,38 @@ class PrishtinaMapTests(TestCase):
 
 
 class MapUISmokeTests(TestCase):
+    def test_dragging_down_moves_the_map_north(self):
+        from ofertaks.ui.widgets.map_view import center_after_drag
+
+        center = (42.6597, 21.1566)
+        north, same_longitude = center_after_drag(center, (100, 100), (100, 0), 14)
+        south, _ = center_after_drag(center, (100, 100), (100, 200), 14)
+
+        self.assertGreater(north, center[0])
+        self.assertLess(south, center[0])
+        self.assertAlmostEqual(same_longitude, center[1], places=5)
+
     def test_map_screen_constructs_with_tiles_disabled(self):
         os.environ["OFERTAKS_DISABLE_MAP_TILES"] = "1"
         try:
             from ofertaks.ui.widgets.map_view import MapSurface, latlon_to_world, world_to_latlon
             from ofertaks.ui.root import OfertaKSApp
+            from ofertaks.maps.providers import OSM_STANDARD_PROVIDER
 
             x, y = latlon_to_world(42.6597, 21.1566, 14)
             latitude, longitude = world_to_latlon(x, y, 14)
             self.assertAlmostEqual(latitude, 42.6597, places=4)
             self.assertAlmostEqual(longitude, 21.1566, places=4)
-            surface = MapSurface(tiles_enabled=False)
-            self.assertEqual(surface.provider.id, "osm_standard")
+            with tempfile.TemporaryDirectory() as tile_cache:
+                with patch("ofertaks.ui.widgets.map_view.get_map_cache_dir", return_value=Path(tile_cache)):
+                    surface = MapSurface(tiles_enabled=False)
+                    self.assertEqual(surface.provider.id, "osm_standard")
+                    self.assertFalse(surface.tiles_enabled)
+                    surface.size = (800, 500)
+                    surface.refresh()
+                    self.assertGreater(len(surface._tiles), 0)
+                    self.assertTrue(all(tile.opacity == 0 for tile in surface._tiles.values()))
+                    self.assertTrue(OSM_STANDARD_PROVIDER.tile_url.startswith("https://"))
             with tempfile.TemporaryDirectory() as tmp:
                 repo = Repository(Database(Path(tmp) / "ui.sqlite3"))
                 repo.initialize()

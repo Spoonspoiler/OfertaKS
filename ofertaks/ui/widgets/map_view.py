@@ -45,6 +45,17 @@ def world_to_latlon(x: float, y: float, zoom: int) -> tuple[float, float]:
     return _clamp_latitude(latitude), longitude
 
 
+def center_after_drag(
+    center: tuple[float, float], start: tuple[float, float], position: tuple[float, float], zoom: int
+) -> tuple[float, float]:
+    """Move the map with the pointer while preserving horizontal map semantics."""
+
+    start_x, start_y = start
+    current_x, current_y = position
+    world_x, world_y = latlon_to_world(*center, zoom)
+    return world_to_latlon(world_x - (current_x - start_x), world_y + (current_y - start_y), zoom)
+
+
 if FloatLayout is not None:
 
     class MapSurface(FloatLayout):
@@ -153,6 +164,7 @@ if FloatLayout is not None:
             last_y = math.floor((bottom + self.height) / 256)
             tile_count = 2**self.zoom
             visible: set[tuple[int, int, int]] = set()
+            missing_tiles: list[tuple[int, int, int]] = []
             for display_x in range(first_x, last_x + 1):
                 for tile_y in range(max(0, first_y), min(tile_count - 1, last_y) + 1):
                     tile_x = display_x % tile_count
@@ -160,14 +172,15 @@ if FloatLayout is not None:
                     visible.add(key)
                     image = self._tiles.get(key)
                     if image is None:
-                        image = Image(size_hint=(None, None), size=(256, 256), allow_stretch=True)
+                        image = Image(size_hint=(None, None), size=(256, 256), allow_stretch=True, opacity=0)
                         self._tiles[key] = image
                         self._tile_layer.add_widget(image)
                         cached = self._tile_path(*key)
                         if cached.exists():
                             image.source = str(cached)
+                            image.opacity = 1
                         elif self.tiles_enabled:
-                            self._fetch_tile(key)
+                            missing_tiles.append(key)
                     image.size = (256, 256)
                     image.pos = (
                         self.x + (display_x * 256 - left),
@@ -177,6 +190,12 @@ if FloatLayout is not None:
                 if key not in visible:
                     self._tile_layer.remove_widget(image)
                     del self._tiles[key]
+            center_tile = (center_x / 256, center_y / 256)
+            for key in sorted(
+                missing_tiles,
+                key=lambda value: (value[1] - center_tile[0]) ** 2 + (value[2] - center_tile[1]) ** 2,
+            ):
+                self._fetch_tile(key)
 
         def _tile_path(self, zoom: int, x: int, y: int) -> Path:
             path = get_map_cache_dir() / "tiles" / self.provider.id / str(zoom) / str(x)
@@ -214,6 +233,7 @@ if FloatLayout is not None:
                     if image is not None and path is not None:
                         image.source = str(path)
                         image.reload()
+                        image.opacity = 1
 
                 Clock.schedule_once(apply, 0)
 
@@ -280,10 +300,8 @@ if FloatLayout is not None:
                 return super().on_touch_move(touch)
             self._touches[touch.uid] = touch.pos
             if len(self._touches) == 1 and self._drag_start and self._drag_center:
-                start_x, start_y = self._drag_start
-                original_x, original_y = latlon_to_world(*self._drag_center, self.zoom)
-                latitude, longitude = world_to_latlon(
-                    original_x - (touch.x - start_x), original_y - (touch.y - start_y), self.zoom
+                latitude, longitude = center_after_drag(
+                    self._drag_center, self._drag_start, (touch.x, touch.y), self.zoom
                 )
                 self.center_latitude, self.center_longitude = latitude, longitude
                 self.refresh()
