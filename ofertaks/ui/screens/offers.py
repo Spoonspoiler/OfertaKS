@@ -152,6 +152,13 @@ class OffersScreen(Screen, OfferCardMixin):
         self.store_spinner.text = t("all")
         self.reload()
 
+    def clear_merchant_context(self) -> None:
+        """Return to the catalog while preserving the user's regular filters."""
+
+        self.selected_merchant_id = None
+        self.selected_chain_id = None
+        self.selected_merchant_name = None
+
     def _sort_changed(self, _spinner, text: str) -> None:
         self.selected_sort = self.sort_labels.get(text, "best")
         self.reload()

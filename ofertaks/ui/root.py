@@ -101,11 +101,18 @@ class OfertaKSApp(App if App is not None else object):
             ("settings", "settings"),
         ]:
             button = Button(text=t(label_key), font_size="11sp")
-            button.bind(on_release=lambda _, name=screen_name: self.show_screen(name))
+            button.bind(on_release=lambda _, name=screen_name: self._show_from_navigation(name))
             bar.add_widget(button)
             self.nav_buttons[label_key] = button
         wrapper.add_widget(bar)
         return wrapper
+
+    def _show_from_navigation(self, name: str) -> None:
+        """Open a top-level screen without retaining a map-specific offer scope."""
+
+        if name == "offers":
+            self.screens["offers"].clear_merchant_context()
+        self.show_screen(name)
 
     def set_language(self, language: str) -> None:
         self.translator.set_language(language)

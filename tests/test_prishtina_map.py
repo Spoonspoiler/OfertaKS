@@ -370,5 +370,13 @@ class MapUISmokeTests(TestCase):
                 map_screen._merchant_selected(result)
                 self.assertGreater(map_screen.card.opacity, 0)
                 self.assertGreaterEqual(map_screen.card.height, 184)
+                app.show_merchant_offers(repo.get_merchant("ui-market"))
+                self.assertEqual(app.screen_manager.current, "offers")
+                self.assertEqual(offers_screen.title_label.text, "Offers: UI market")
+                app._show_from_navigation("offers")
+                self.assertIsNone(offers_screen.selected_merchant_id)
+                self.assertIsNone(offers_screen.selected_chain_id)
+                self.assertEqual(offers_screen.title_label.text, "Offers")
+                self.assertEqual(len(offers_screen.offer_list.children), 1)
         finally:
             os.environ.pop("OFERTAKS_DISABLE_MAP_TILES", None)
