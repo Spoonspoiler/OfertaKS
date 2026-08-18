@@ -6,7 +6,12 @@ import sqlite3
 from pathlib import Path
 from types import TracebackType
 
-from ofertaks.database.schema import SCHEMA_SQL, SCHEMA_VERSION
+from ofertaks.database.schema import (
+    OFFER_MIGRATION_COLUMNS,
+    POST_MIGRATION_SQL,
+    SCHEMA_SQL,
+    SCHEMA_VERSION,
+)
 
 
 class _ConnectionManager:
@@ -49,4 +54,15 @@ class Database:
     def initialize(self) -> None:
         with self.connect() as connection:
             connection.executescript(SCHEMA_SQL)
+            self._migrate_offer_columns(connection)
+            connection.executescript(POST_MIGRATION_SQL)
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
+    def _migrate_offer_columns(self, connection: sqlite3.Connection) -> None:
+        existing = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(offers)")
+        }
+        for column, definition in OFFER_MIGRATION_COLUMNS.items():
+            if column not in existing:
+                connection.execute(f"ALTER TABLE offers ADD COLUMN {column} {definition}")

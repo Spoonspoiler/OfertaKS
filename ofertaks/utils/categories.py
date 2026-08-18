@@ -9,6 +9,7 @@ DRINK = "DRINK"
 MEAT = "MEAT"
 FRUIT_VEGETABLE = "FRUIT_VEGETABLE"
 DAIRY = "DAIRY"
+BAKERY = "BAKERY"
 HOUSEHOLD = "HOUSEHOLD"
 HYGIENE = "HYGIENE"
 BABY = "BABY"
@@ -61,6 +62,15 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
         "cheese",
         "gjalp",
         "ajke",
+    ),
+    BAKERY: (
+        "buke",
+        "bread",
+        "kifle",
+        "croissant",
+        "pite",
+        "byrek",
+        "furre",
     ),
     HOUSEHOLD: (
         "detergjent",

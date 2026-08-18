@@ -1,0 +1,113 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: android-debug-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-android-debug:
+    name: Build debug APK
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Python 3.11 is intentionally used for the Buildozer/python-for-android stack.
+      # It is current enough for desktop development while avoiding newest-Python churn.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            autoconf \
+            automake \
+            build-essential \
+            ccache \
+            cmake \
+            gettext \
+            git \
+            libffi-dev \
+            libltdl-dev \
+            libncurses5-dev \
+            libncursesw5-dev \
+            libssl-dev \
+            libtool \
+            openjdk-17-jdk \
+            pkg-config \
+            python3-dev \
+            unzip \
+            zip \
+            zlib1g-dev
+
+      - name: Cache Buildozer and Android artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            .buildozer
+            ~/.buildozer
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.cache/pip
+          key: android-buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec', 'requirements.txt') }}
+          restore-keys: |
+            android-buildozer-${{ runner.os }}-
+
+      - name: Install Buildozer
+        run: |
+          python -m pip install --upgrade pip wheel setuptools
+          python -m pip install "buildozer==1.5.0" "cython<3"
+
+      - name: Check configured app version
+        run: |
+          python - <<'PY'
+          import configparser
+          import ofertaks
+          spec = configparser.ConfigParser()
+          spec.read("buildozer.spec")
+          spec_version = spec["app"]["version"]
+          if spec_version != ofertaks.__version__:
+              raise SystemExit(f"Version mismatch: buildozer={spec_version} package={ofertaks.__version__}")
+          print(f"OfertaKS version {ofertaks.__version__}")
+          PY
+
+      - name: Build debug APK
+        run: buildozer android debug
+
+      - name: Write APK build information
+        if: always()
+        run: |
+          {
+            echo "Git commit SHA: $GITHUB_SHA"
+            echo "Branch: ${GITHUB_REF_NAME}"
+            echo "Build date: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            python - <<'PY'
+          import ofertaks
+          print(f"App version: {ofertaks.__version__}")
+          PY
+          } > build-info.txt
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OfertaKS-Android-Debug
+          path: |
+            bin/*.apk
+            build-info.txt
+          if-no-files-found: error
+          retention-days: 14

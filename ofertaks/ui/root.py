@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import os
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
-from ofertaks.app.config import get_data_dir
-from ofertaks.app.localization import t
+from ofertaks.app.paths import get_app_data_dir, get_debug_scrape_dir
+from ofertaks.localization import Translator, set_language, t
 from ofertaks.services.sync_service import SyncService
 
-os.environ.setdefault("KIVY_HOME", str(get_data_dir() / "kivy"))
+os.environ.setdefault("KIVY_HOME", str(get_app_data_dir() / "kivy"))
 
 try:
     from kivy.app import App
@@ -35,9 +34,12 @@ class OfertaKSApp(App if App is not None else object):
             ) from KIVY_IMPORT_ERROR
         super().__init__(**kwargs)
         self.repository = repository
+        self.translator = Translator.from_repository(repository)
+        set_language(self.translator.language)
         self.executor = ThreadPoolExecutor(max_workers=1)
         self.screen_manager = None
         self.sync_status: dict[str, str] = {}
+        self.nav_buttons: dict[str, object] = {}
 
     def build(self):
         from ofertaks.ui.screens.basket import BasketScreen
@@ -68,7 +70,18 @@ class OfertaKSApp(App if App is not None else object):
         return root
 
     def _nav_bar(self):
-        bar = BoxLayout(size_hint_y=None, height=dp(52), spacing=dp(2), padding=dp(4))
+        from kivy.uix.anchorlayout import AnchorLayout
+
+        wrapper = AnchorLayout(anchor_x="center", anchor_y="center", size_hint_y=None, height=dp(52))
+        bar = BoxLayout(size_hint=(None, 1), width=dp(760), spacing=dp(2), padding=dp(4))
+
+        def update_width(instance, width):
+            bar.width = min(max(width, Window.width), dp(760))
+
+        wrapper.bind(width=update_width)
+        update_width(wrapper, wrapper.width)
+        Clock.schedule_once(lambda *_: update_width(wrapper, wrapper.width), 0)
+        self.nav_buttons = {}
         for screen_name, label_key in [
             ("home", "home"),
             ("offers", "offers"),
@@ -80,7 +93,21 @@ class OfertaKSApp(App if App is not None else object):
             button = Button(text=t(label_key))
             button.bind(on_release=lambda _, name=screen_name: self.show_screen(name))
             bar.add_widget(button)
-        return bar
+            self.nav_buttons[label_key] = button
+        wrapper.add_widget(bar)
+        return wrapper
+
+    def set_language(self, language: str) -> None:
+        self.translator.set_language(language)
+        set_language(language)
+        self.repository.set_preference("language", self.translator.language)
+        for key, button in self.nav_buttons.items():
+            button.text = t(key)
+        for screen in getattr(self, "screens", {}).values():
+            if hasattr(screen, "translate"):
+                screen.translate()
+            if hasattr(screen, "reload"):
+                screen.reload()
 
     def show_screen(self, name: str) -> None:
         self.screen_manager.current = name
@@ -99,9 +126,7 @@ class OfertaKSApp(App if App is not None else object):
                 screen.reload()
 
     def start_sync(self) -> None:
-        data_dir = get_data_dir()
-        debug_dir = Path(data_dir) / "debug_scrapes"
-        service = SyncService(self.repository, debug_dir=debug_dir)
+        service = SyncService(self.repository, debug_dir=get_debug_scrape_dir())
         self.sync_status = {store["id"]: "queued" for store in self.repository.stores(True)}
         self._notify_sync_change()
 

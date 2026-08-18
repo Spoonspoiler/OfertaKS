@@ -5,9 +5,13 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from ofertaks import __version__
+from ofertaks.app.paths import get_app_data_dir
+
 APP_NAME = "OfertaKS"
+APP_VERSION = __version__
 PACKAGE_NAME = "com.ptitspot.ofertaks"
-DEFAULT_LANGUAGE = "sq"
+DEFAULT_LANGUAGE = "en"
 DEBUG_SCRAPERS = os.environ.get("OFERTAKS_DEBUG_SCRAPERS", "0") == "1"
 AUTO_SYNC_MAX_AGE_HOURS = 6
 HTTP_TIMEOUT_SECONDS = 15
@@ -41,10 +45,4 @@ STORE_CONFIG = {
 
 def get_data_dir() -> Path:
     """Return a writable app data directory on desktop and Android."""
-    android_private = os.environ.get("ANDROID_PRIVATE")
-    if android_private:
-        return Path(android_private) / "ofertaks"
-    override = os.environ.get("OFERTAKS_DATA_DIR")
-    if override:
-        return Path(override)
-    return Path.home() / ".ofertaks"
+    return get_app_data_dir()

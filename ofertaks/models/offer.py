@@ -26,10 +26,16 @@ class Offer:
     source_url: str
     image_url: str | None
     scraped_at: datetime
+    merchant_id: str | None = None
+    chain_id: str | None = None
+    origin_country: str | None = None
+    origin_region: str | None = None
 
     def to_record(self) -> dict[str, Any]:
         return {
             "store_id": self.store_id,
+            "merchant_id": self.merchant_id,
+            "chain_id": self.chain_id,
             "raw_name": self.raw_name,
             "normalized_name": self.normalized_name,
             "brand": self.brand,
@@ -42,6 +48,8 @@ class Offer:
             "category": self.category,
             "valid_from": self.valid_from.isoformat() if self.valid_from else None,
             "valid_until": self.valid_until.isoformat() if self.valid_until else None,
+            "origin_country": self.origin_country,
+            "origin_region": self.origin_region,
             "source_url": self.source_url,
             "image_url": self.image_url,
             "scraped_at": self.scraped_at.isoformat(timespec="seconds"),
@@ -49,9 +57,15 @@ class Offer:
 
     @classmethod
     def from_row(cls, row: Any, store_name: str | None = None) -> "Offer":
+        def row_value(key: str, default: Any = None) -> Any:
+            try:
+                return row[key]
+            except (KeyError, IndexError):
+                return default
+
         return cls(
             store_id=row["store_id"],
-            store_name=store_name or row.get("store_name", row["store_id"]),
+            store_name=store_name or row_value("store_name", row["store_id"]),
             raw_name=row["raw_name"],
             normalized_name=row["normalized_name"],
             brand=row["brand"],
@@ -69,4 +83,8 @@ class Offer:
             source_url=row["source_url"],
             image_url=row["image_url"],
             scraped_at=datetime.fromisoformat(row["scraped_at"]),
+            merchant_id=row_value("merchant_id"),
+            chain_id=row_value("chain_id"),
+            origin_country=row_value("origin_country"),
+            origin_region=row_value("origin_region"),
         )

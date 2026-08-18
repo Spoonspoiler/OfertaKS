@@ -1,48 +1,76 @@
 # OfertaKS
 
-OfertaKS is an offline-first Android-oriented Kivy app for comparing Kosovo supermarket offers. It stores offers and price history locally in SQLite, normalizes product names and units, scores deals, searches cached data, and optimizes a small shopping basket.
+OfertaKS is an offline-first Android-oriented Kivy app for comparing Kosovo supermarket offers and growing into a local food decision engine. It stores offers and price history locally in SQLite, normalizes product names and units, scores deals, searches cached data, optimizes a small shopping basket, and now includes foundations for merchants, pantry, recipes, routing, origin, quality, and community price observations.
 
-## Desktop Development
+The long-term question is practical: what can I eat well today, using what I already have, while spending as little as reasonably possible and considering where I am?
 
-Create a virtual environment, install dependencies, then run:
+## Development On Windows
 
-```bash
-pip install -r requirements.txt
+Create and activate a virtual environment:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements-dev.txt
+```
+
+Run tests and launch the desktop app:
+
+```powershell
+pytest -q
 python main.py
 ```
 
 The app database is stored under `~/.ofertaks/ofertaks.sqlite3` on desktop. Override this with `OFERTAKS_DATA_DIR=/path/to/data`.
 
-Run tests without network access:
+Runtime dependencies stay in `requirements.txt`. Developer/test dependencies, including pytest, are in `requirements-dev.txt` so pytest is not packaged into the Android APK.
 
-```bash
-python -m unittest discover -s tests -q
+## Localization
+
+OfertaKS officially supports:
+
+- Albanian (`sq`, displayed as `Shqip`)
+- English (`en`, displayed as `English`)
+- French (`fr`, displayed as `Français`)
+
+English is the fallback for unsupported system languages and missing translation keys. The app detects the system language on first launch, then a manual Settings selection overrides detection and is persisted locally.
+
+## Android Debug Build With GitHub Actions
+
+Windows is the primary local development environment. Android APKs are built remotely by GitHub Actions on Ubuntu, so local WSL/Linux is not required for ordinary development.
+
+Workflow:
+
+1. Commit changes.
+2. Push to GitHub `main`.
+3. Open the GitHub repository.
+4. Go to **Actions**.
+5. Open **Build Android APK**.
+6. Wait for the run to finish, or run it manually with **Run workflow**.
+7. Download the `OfertaKS-Android-Debug` artifact.
+8. Extract the artifact ZIP.
+9. Transfer the APK to the Android phone.
+10. Install the APK.
+
+Android may require enabling **Install unknown apps** for the browser, file manager, or app used to open the APK.
+
+The workflow uses Python 3.11 and Java 17 for Buildozer/python-for-android compatibility. It uploads `bin/*.apk` plus `build-info.txt` as `OfertaKS-Android-Debug` and keeps the artifact for 14 days.
+
+If Android builds become too slow for every push, remove or comment the `push` trigger in `.github/workflows/android-debug.yml` and keep `workflow_dispatch` for manual builds.
+
+## Optional ADB Install From Windows
+
+```powershell
+adb devices
+adb install -r path\to\ofertaks.apk
 ```
 
-## Android Debug Build
+ADB is useful for frequent testing but is not required for ordinary APK installation.
 
-Buildozer is best run from Linux or WSL because python-for-android needs a Linux build toolchain.
+## Android Workflow Troubleshooting
 
-Typical WSL setup:
-
-```bash
-sudo apt update
-sudo apt install -y python3 python3-pip python3-venv git zip unzip openjdk-17-jdk
-python3 -m pip install --user buildozer cython
-buildozer android debug
-```
-
-The debug APK is produced under `bin/`, usually with a name similar to:
-
-```text
-bin/ofertaks-0.1.0-arm64-v8a-debug.apk
-```
-
-Install on a connected Android device:
-
-```bash
-adb install -r bin/ofertaks-0.1.0-arm64-v8a-debug.apk
-```
+If the Android workflow fails, open GitHub -> Actions -> Build Android APK -> failed run -> Build debug APK logs. The first remote run still needs to validate the Buildozer environment and may reveal python-for-android packaging details to fix.
 
 ## Release Build Preparation
 
@@ -55,6 +83,18 @@ Scrapers never insert fake production data.
 - ETC: text offer pages are supported and are the first real data source.
 - Interex: flyer metadata and PDF downloads are supported. Text extraction uses `pypdf`; image-only PDFs are marked `ocr_required`.
 - Viva Fresh: JSON-LD and structured card parsing are supported. Current public offer pages may be image-based; those are recorded as partial, not fabricated.
+
+## Merchant, Pantry, Recipes, Routing
+
+OfertaKS treats concrete merchants/places as the fundamental location entity. Chains are metadata. The current app includes:
+
+- `chains` and `merchants` tables
+- Haversine distance and duplicate merchant detection
+- local pantry items
+- recipe ingredient matching
+- missing ingredient calculation
+- additional recipe cost from cached offers
+- freshness, quality, and origin provenance helpers for future community observations
 
 ## Scraper Maintenance
 
@@ -85,7 +125,16 @@ Core modules are separated from the UI:
 - `database`: SQLite schema and repository
 - `scrapers`: store-specific adapters
 - `services`: sync, history, comparison, basket optimizer
+- `recipes`: pantry and recipe matching
+- `routing`: distance helpers
+- `community`: freshness, quality, and origin reasoning
 - `ui`: Kivy screens and widgets
+
+More detail is in `docs/ARCHITECTURE.md`, `docs/DATA_MODEL.md`, and `AGENTS.md`.
+
+## Git Workflow
+
+Before significant work, inspect status/history/diff. After meaningful changes, update `CHANGELOG.md` and `docs/DEVLOG.md`, run tests, and propose a commit message with a clear prefix such as `feat:`, `fix:`, `test:`, or `docs:`.
 
 ## Known MVP Limits
 

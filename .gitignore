@@ -13,6 +13,8 @@ env/
 .pytest_cache/
 .coverage
 htmlcov/
+kivy/
+*.sqlite3
 
 # Buildozer / Android builds
 .buildozer/

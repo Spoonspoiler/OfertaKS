@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from ofertaks.app.localization import t
+from ofertaks.localization import t
+from ofertaks.ui.theme import MUTED, bind_scroll_content_width, make_label, make_screen_layout
 from ofertaks.ui.widgets.offer_card import OfferCardMixin
 
 try:
@@ -16,50 +17,76 @@ class OffersScreen(Screen, OfferCardMixin):
     def __init__(self, app, **kwargs):
         from kivy.metrics import dp
         from kivy.uix.boxlayout import BoxLayout
-        from kivy.uix.label import Label
         from kivy.uix.scrollview import ScrollView
         from kivy.uix.spinner import Spinner
 
         super().__init__(**kwargs)
         self.app = app
-        layout = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(8))
-        layout.add_widget(Label(text=t("offers"), size_hint_y=None, height=dp(36), bold=True, font_size="22sp"))
+        self.selected_store_id: str | None = None
+        self.selected_sort = "best"
+        frame, layout = make_screen_layout()
+        self.title_label = make_label(text=t("offers"), size_hint_y=None, height=dp(36), bold=True, font_size="22sp")
+        layout.add_widget(self.title_label)
         filters = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(8))
-        self.store_spinner = Spinner(text="All", values=("All", "Viva Fresh", "Interex", "ETC"))
-        self.sort_spinner = Spinner(
-            text="Best deals",
-            values=("Best deals", "Lowest price", "Largest discount", "Newest", "Price per unit"),
-        )
-        self.store_spinner.bind(text=lambda *_: self.reload())
-        self.sort_spinner.bind(text=lambda *_: self.reload())
+        self.store_spinner = Spinner()
+        self.sort_spinner = Spinner()
         filters.add_widget(self.store_spinner)
         filters.add_widget(self.sort_spinner)
         layout.add_widget(filters)
         scroll = ScrollView()
         self.offer_list = BoxLayout(orientation="vertical", spacing=dp(8), size_hint_y=None)
         self.offer_list.bind(minimum_height=self.offer_list.setter("height"))
+        bind_scroll_content_width(scroll, self.offer_list)
         scroll.add_widget(self.offer_list)
         layout.add_widget(scroll)
-        self.add_widget(layout)
+        self.add_widget(frame)
+        self.translate()
+        self.store_spinner.bind(text=self._store_changed)
+        self.sort_spinner.bind(text=self._sort_changed)
+
+    def translate(self) -> None:
+        self.title_label.text = t("offers")
+        self.store_labels = {
+            t("all"): None,
+            "Viva Fresh": "viva_fresh",
+            "Interex": "interex",
+            "ETC": "etc",
+        }
+        self.sort_labels = {
+            t("sort_best_deals"): "best",
+            t("sort_lowest_price"): "lowest",
+            t("largest_discount"): "discount",
+            t("newest"): "newest",
+            t("price_per_unit"): "unit",
+        }
+        self.store_spinner.values = tuple(self.store_labels)
+        self.sort_spinner.values = tuple(self.sort_labels)
+        self.store_spinner.text = next(
+            label for label, store_id in self.store_labels.items() if store_id == self.selected_store_id
+        )
+        self.sort_spinner.text = next(
+            label for label, sort in self.sort_labels.items() if sort == self.selected_sort
+        )
+
+    def _store_changed(self, _spinner, text: str) -> None:
+        self.selected_store_id = self.store_labels.get(text)
+        self.reload()
+
+    def _sort_changed(self, _spinner, text: str) -> None:
+        self.selected_sort = self.sort_labels.get(text, "best")
+        self.reload()
 
     def reload(self) -> None:
         from kivy.metrics import dp
-        from kivy.uix.label import Label
 
-        store_map = {"Viva Fresh": "viva_fresh", "Interex": "interex", "ETC": "etc"}
-        sort_map = {
-            "Best deals": "best",
-            "Lowest price": "lowest",
-            "Largest discount": "discount",
-            "Newest": "newest",
-            "Price per unit": "unit",
-        }
-        store_id = store_map.get(self.store_spinner.text)
-        sort = sort_map.get(self.sort_spinner.text, "best")
-        offers = self.app.repository.list_offers(store_id=store_id, sort=sort, limit=250)
+        offers = self.app.repository.list_offers(
+            store_id=self.selected_store_id,
+            sort=self.selected_sort,
+            limit=250,
+        )
         self.offer_list.clear_widgets()
         if not offers:
-            self.offer_list.add_widget(Label(text=t("no_offers"), size_hint_y=None, height=dp(44)))
+            self.offer_list.add_widget(make_label(text=t("no_offers"), size_hint_y=None, height=dp(44), color=MUTED))
             return
         for offer in offers:
             self.offer_list.add_widget(self.build_offer_card(offer, self.app.show_product))

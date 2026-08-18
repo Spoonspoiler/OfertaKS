@@ -95,6 +95,7 @@ class BaseScraper:
             source_url=source_url,
             image_url=image_url,
             scraped_at=scraped_at or datetime.now(UTC),
+            chain_id=self.store_id,
         )
 
     def save_debug_file(self, name: str, content: bytes | str) -> None:

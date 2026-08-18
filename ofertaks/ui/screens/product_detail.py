@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from ofertaks.app.localization import t
+from ofertaks.localization import t
 from ofertaks.parsing.unit_parser import format_quantity, format_unit_price
+from ofertaks.ui.theme import make_label, make_screen_layout
 
 try:
     from kivy.uix.screenmanager import Screen
@@ -51,28 +52,30 @@ class PriceHistoryGraph:
 class ProductDetailScreen(Screen):
     def __init__(self, app, **kwargs):
         from kivy.metrics import dp
-        from kivy.uix.boxlayout import BoxLayout
         from kivy.uix.button import Button
-        from kivy.uix.label import Label
 
         super().__init__(**kwargs)
         self.app = app
         self.offer = None
-        layout = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(8))
+        frame, layout = make_screen_layout()
         back = Button(text="<", size_hint=(None, None), width=dp(48), height=dp(42))
         back.bind(on_release=lambda *_: self.app.show_screen("offers"))
         layout.add_widget(back)
-        self.title = Label(size_hint_y=None, height=dp(38), bold=True, font_size="22sp")
-        self.subtitle = Label(size_hint_y=None, height=dp(28))
-        self.price_rows = Label(halign="left", valign="top", text_size=(0, None))
+        self.title = make_label(size_hint_y=None, height=dp(38), bold=True, font_size="22sp")
+        self.subtitle = make_label(size_hint_y=None, height=dp(28))
+        self.price_rows = make_label(halign="left", valign="top", use_height=False)
         graph_wrapper = PriceHistoryGraph(size_hint_y=None, height=dp(150))
         self.graph = graph_wrapper.widget
         layout.add_widget(self.title)
         layout.add_widget(self.subtitle)
         layout.add_widget(self.price_rows)
-        layout.add_widget(Label(text=t("price_history"), size_hint_y=None, height=dp(30), bold=True))
+        self.history_label = make_label(text=t("price_history"), size_hint_y=None, height=dp(30), bold=True)
+        layout.add_widget(self.history_label)
         layout.add_widget(self.graph)
-        self.add_widget(layout)
+        self.add_widget(frame)
+
+    def translate(self) -> None:
+        self.history_label.text = t("price_history")
 
     def set_offer(self, offer) -> None:
         self.offer = offer

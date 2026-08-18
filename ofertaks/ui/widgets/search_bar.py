@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ofertaks.app.localization import t
+from ofertaks.localization import t
 
 
 def build_search_bar(on_submit):
@@ -18,4 +18,4 @@ def build_search_bar(on_submit):
     input_box.bind(on_text_validate=lambda *_: on_submit(input_box.text))
     row.add_widget(input_box)
     row.add_widget(button)
-    return row, input_box
+    return row, input_box, button

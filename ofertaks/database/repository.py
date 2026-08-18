@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import Any, Iterable
 
 from ofertaks.app.config import STORE_CONFIG
+from ofertaks.app.smoke import app_smoke_check
 from ofertaks.database.database import Database
+from ofertaks.models.community import OriginObservation, QualityObservation
+from ofertaks.models.merchant import Chain, Merchant
 from ofertaks.models.offer import Offer
+from ofertaks.models.recipe import Recipe, RecipeIngredient
 from ofertaks.normalization.product_normalizer import normalize_product_name
 
 
@@ -18,6 +23,7 @@ class Repository:
     def initialize(self) -> None:
         self.database.initialize()
         self.seed_stores()
+        self.seed_chains()
 
     def seed_stores(self) -> None:
         with self.database.connect() as db:
@@ -33,6 +39,39 @@ class Repository:
                     (store_id, data["name"], data["website"], int(data["enabled"])),
                 )
 
+    def seed_chains(self) -> None:
+        now = self._now()
+        with self.database.connect() as db:
+            for chain_id, data in STORE_CONFIG.items():
+                db.execute(
+                    """
+                    INSERT INTO chains (id, name, website, enabled, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        name=excluded.name,
+                        website=excluded.website,
+                        enabled=excluded.enabled,
+                        updated_at=excluded.updated_at
+                    """,
+                    (
+                        chain_id,
+                        data["name"],
+                        data["website"],
+                        int(data["enabled"]),
+                        now,
+                        now,
+                    ),
+                )
+
+    def chains(self, enabled_only: bool = False) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM chains"
+        params: tuple[Any, ...] = ()
+        if enabled_only:
+            sql += " WHERE enabled = 1"
+        sql += " ORDER BY name"
+        with self.database.connect() as db:
+            return [dict(row) for row in db.execute(sql, params)]
+
     def stores(self, enabled_only: bool = False) -> list[dict[str, Any]]:
         sql = "SELECT * FROM stores"
         params: tuple[Any, ...] = ()
@@ -47,7 +86,7 @@ class Repository:
             db.execute("UPDATE stores SET enabled = ? WHERE id = ?", (int(enabled), store_id))
 
     def start_scrape_run(self, store_id: str) -> int:
-        now = datetime.now(UTC).isoformat(timespec="seconds")
+        now = self._now()
         with self.database.connect() as db:
             cursor = db.execute(
                 "INSERT INTO scrape_runs (store_id, started_at, status) VALUES (?, ?, ?)",
@@ -62,7 +101,7 @@ class Repository:
         items_found: int,
         error_message: str | None = None,
     ) -> None:
-        now = datetime.now(UTC).isoformat(timespec="seconds")
+        now = self._now()
         with self.database.connect() as db:
             db.execute(
                 """
@@ -90,14 +129,18 @@ class Repository:
                 db.execute(
                     """
                     INSERT INTO offers (
-                        store_id, raw_name, normalized_name, brand, quantity, unit,
+                        store_id, merchant_id, chain_id,
+                        raw_name, normalized_name, brand, quantity, unit,
                         normal_price, offer_price, unit_price, discount_percent,
-                        category, valid_from, valid_until, source_url, image_url, scraped_at
+                        category, valid_from, valid_until, origin_country, origin_region,
+                        source_url, image_url, scraped_at
                     )
                     VALUES (
-                        :store_id, :raw_name, :normalized_name, :brand, :quantity, :unit,
+                        :store_id, :merchant_id, :chain_id,
+                        :raw_name, :normalized_name, :brand, :quantity, :unit,
                         :normal_price, :offer_price, :unit_price, :discount_percent,
-                        :category, :valid_from, :valid_until, :source_url, :image_url, :scraped_at
+                        :category, :valid_from, :valid_until, :origin_country, :origin_region,
+                        :source_url, :image_url, :scraped_at
                     )
                     """,
                     offer.to_record(),
@@ -133,14 +176,18 @@ class Repository:
             cursor = db.execute(
                 """
                 INSERT INTO offers (
-                    store_id, raw_name, normalized_name, brand, quantity, unit,
+                    store_id, merchant_id, chain_id,
+                    raw_name, normalized_name, brand, quantity, unit,
                     normal_price, offer_price, unit_price, discount_percent,
-                    category, valid_from, valid_until, source_url, image_url, scraped_at
+                    category, valid_from, valid_until, origin_country, origin_region,
+                    source_url, image_url, scraped_at
                 )
                 VALUES (
-                    :store_id, :raw_name, :normalized_name, :brand, :quantity, :unit,
+                    :store_id, :merchant_id, :chain_id,
+                    :raw_name, :normalized_name, :brand, :quantity, :unit,
                     :normal_price, :offer_price, :unit_price, :discount_percent,
-                    :category, :valid_from, :valid_until, :source_url, :image_url, :scraped_at
+                    :category, :valid_from, :valid_until, :origin_country, :origin_region,
+                    :source_url, :image_url, :scraped_at
                 )
                 """,
                 offer.to_record(),
@@ -284,7 +331,7 @@ class Repository:
         with self.database.connect() as db:
             db.execute(
                 "INSERT INTO basket_items (query, quantity, created_at) VALUES (?, ?, ?)",
-                (query, quantity, datetime.now(UTC).isoformat(timespec="seconds")),
+                (query, quantity, self._now()),
             )
 
     def list_basket_items(self) -> list[dict[str, Any]]:
@@ -331,4 +378,308 @@ class Repository:
                     "SELECT store_id, COUNT(*) AS count FROM offers GROUP BY store_id"
                 )
             }
-        return {"stores": stores, "last_runs": runs, "offer_counts": counts}
+            merchant_count = db.execute("SELECT COUNT(*) AS count FROM merchants").fetchone()[
+                "count"
+            ]
+            community_sync = [
+                dict(row)
+                for row in db.execute("SELECT * FROM community_sync_state ORDER BY source")
+            ]
+        return {
+            "stores": stores,
+            "last_runs": runs,
+            "offer_counts": counts,
+            "merchant_count": merchant_count,
+            "community_sync": community_sync,
+            "app_smoke": app_smoke_check(self.database.path.parent / "cache"),
+        }
+
+    def add_merchant(self, merchant: Merchant) -> str:
+        now = self._now()
+        created = (merchant.created_at.isoformat(timespec="seconds") if merchant.created_at else now)
+        updated = (merchant.updated_at.isoformat(timespec="seconds") if merchant.updated_at else now)
+        with self.database.connect() as db:
+            db.execute(
+                """
+                INSERT INTO merchants (
+                    id, name, merchant_type, chain_id, latitude, longitude,
+                    address, city, neighborhood, phone, website, opening_hours_json,
+                    payment_cash, payment_card, community_added, claimed_by_merchant,
+                    verification_status, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    name=excluded.name,
+                    merchant_type=excluded.merchant_type,
+                    chain_id=excluded.chain_id,
+                    latitude=excluded.latitude,
+                    longitude=excluded.longitude,
+                    address=excluded.address,
+                    city=excluded.city,
+                    neighborhood=excluded.neighborhood,
+                    phone=excluded.phone,
+                    website=excluded.website,
+                    opening_hours_json=excluded.opening_hours_json,
+                    payment_cash=excluded.payment_cash,
+                    payment_card=excluded.payment_card,
+                    community_added=excluded.community_added,
+                    claimed_by_merchant=excluded.claimed_by_merchant,
+                    verification_status=excluded.verification_status,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    merchant.id,
+                    merchant.name,
+                    merchant.merchant_type,
+                    merchant.chain_id,
+                    merchant.latitude,
+                    merchant.longitude,
+                    merchant.address,
+                    merchant.city,
+                    merchant.neighborhood,
+                    merchant.phone,
+                    merchant.website,
+                    json.dumps(merchant.opening_hours) if merchant.opening_hours else None,
+                    self._optional_bool(merchant.payment_cash),
+                    self._optional_bool(merchant.payment_card),
+                    int(merchant.community_added),
+                    int(merchant.claimed_by_merchant),
+                    merchant.verification_status,
+                    created,
+                    updated,
+                ),
+            )
+        return merchant.id
+
+    def list_merchants(self) -> list[dict[str, Any]]:
+        with self.database.connect() as db:
+            return [dict(row) for row in db.execute("SELECT * FROM merchants ORDER BY name")]
+
+    def add_pantry_item(
+        self,
+        raw_name: str,
+        quantity: float | None = None,
+        unit: str | None = None,
+        expires_at: datetime | None = None,
+    ) -> int:
+        normalized = normalize_product_name(raw_name)
+        with self.database.connect() as db:
+            cursor = db.execute(
+                """
+                INSERT INTO pantry_items (
+                    raw_name, normalized_name, quantity, unit, expires_at, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    raw_name,
+                    normalized.normalized_name,
+                    quantity if quantity is not None else normalized.quantity,
+                    unit or normalized.unit,
+                    expires_at.isoformat(timespec="seconds") if expires_at else None,
+                    self._now(),
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def list_pantry_items(self) -> list[dict[str, Any]]:
+        with self.database.connect() as db:
+            return [
+                dict(row)
+                for row in db.execute("SELECT * FROM pantry_items ORDER BY created_at, id")
+            ]
+
+    def clear_pantry(self) -> None:
+        with self.database.connect() as db:
+            db.execute("DELETE FROM pantry_items")
+
+    def upsert_recipe(self, recipe: Recipe) -> int:
+        now = self._now()
+        with self.database.connect() as db:
+            db.execute(
+                """
+                INSERT INTO recipes (
+                    slug, title, cuisine, servings, instructions_json, source, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(slug) DO UPDATE SET
+                    title=excluded.title,
+                    cuisine=excluded.cuisine,
+                    servings=excluded.servings,
+                    instructions_json=excluded.instructions_json,
+                    source=excluded.source,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    recipe.slug,
+                    recipe.title,
+                    recipe.cuisine,
+                    recipe.servings,
+                    json.dumps(list(recipe.instructions)),
+                    recipe.source,
+                    now,
+                    now,
+                ),
+            )
+            recipe_id = int(
+                db.execute("SELECT id FROM recipes WHERE slug = ?", (recipe.slug,)).fetchone()[
+                    "id"
+                ]
+            )
+            db.execute("DELETE FROM recipe_ingredients WHERE recipe_id = ?", (recipe_id,))
+            db.execute("DELETE FROM recipe_tags WHERE recipe_id = ?", (recipe_id,))
+            for ingredient in recipe.ingredients:
+                normalized = normalize_product_name(ingredient.raw_name)
+                db.execute(
+                    """
+                    INSERT INTO recipe_ingredients (
+                        recipe_id, raw_name, normalized_name, quantity, unit, required
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        recipe_id,
+                        ingredient.raw_name,
+                        ingredient.normalized_name or normalized.normalized_name,
+                        ingredient.quantity if ingredient.quantity is not None else normalized.quantity,
+                        ingredient.unit or normalized.unit,
+                        int(ingredient.required),
+                    ),
+                )
+            for tag in recipe.tags:
+                db.execute(
+                    "INSERT OR IGNORE INTO recipe_tags (recipe_id, tag) VALUES (?, ?)",
+                    (recipe_id, tag),
+                )
+            return recipe_id
+
+    def list_recipes(self) -> list[dict[str, Any]]:
+        with self.database.connect() as db:
+            return [dict(row) for row in db.execute("SELECT * FROM recipes ORDER BY title")]
+
+    def recipe_ingredients(self, recipe_id: int) -> list[RecipeIngredient]:
+        with self.database.connect() as db:
+            return [
+                RecipeIngredient(
+                    id=row["id"],
+                    raw_name=row["raw_name"],
+                    normalized_name=row["normalized_name"],
+                    quantity=row["quantity"],
+                    unit=row["unit"],
+                    required=bool(row["required"]),
+                )
+                for row in db.execute(
+                    "SELECT * FROM recipe_ingredients WHERE recipe_id = ? ORDER BY id",
+                    (recipe_id,),
+                )
+            ]
+
+    def record_quality_observation(self, observation: QualityObservation) -> int:
+        with self.database.connect() as db:
+            cursor = db.execute(
+                """
+                INSERT INTO quality_observations (
+                    product_id, merchant_id, observed_at, taste_score, freshness_score,
+                    appearance_score, value_score, comment, confidence, confirmation_count
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    observation.product_id,
+                    observation.merchant_id,
+                    observation.observed_at.isoformat(timespec="seconds"),
+                    observation.taste_score,
+                    observation.freshness_score,
+                    observation.appearance_score,
+                    observation.value_score,
+                    observation.comment,
+                    observation.confidence,
+                    observation.confirmation_count,
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def list_quality_observations(
+        self, product_id: int | None = None, merchant_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        where = []
+        params: list[Any] = []
+        if product_id is not None:
+            where.append("product_id = ?")
+            params.append(product_id)
+        if merchant_id is not None:
+            where.append("merchant_id = ?")
+            params.append(merchant_id)
+        sql = "SELECT * FROM quality_observations"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY observed_at DESC"
+        with self.database.connect() as db:
+            return [dict(row) for row in db.execute(sql, params)]
+
+    def record_origin_observation(self, observation: OriginObservation) -> int:
+        with self.database.connect() as db:
+            cursor = db.execute(
+                """
+                INSERT INTO origin_observations (
+                    product_id, merchant_id, raw_name, normalized_name, country, region,
+                    producer, source, confidence, observed_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    observation.product_id,
+                    observation.merchant_id,
+                    observation.raw_name,
+                    observation.normalized_name,
+                    observation.country,
+                    observation.region,
+                    observation.producer,
+                    observation.source,
+                    observation.confidence,
+                    observation.observed_at.isoformat(timespec="seconds"),
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def list_origin_observations(self, product_id: int | None = None) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM origin_observations"
+        params: list[Any] = []
+        if product_id is not None:
+            sql += " WHERE product_id = ?"
+            params.append(product_id)
+        sql += " ORDER BY observed_at DESC"
+        with self.database.connect() as db:
+            return [dict(row) for row in db.execute(sql, params)]
+
+    def set_preference(self, key: str, value: Any) -> None:
+        with self.database.connect() as db:
+            db.execute(
+                """
+                INSERT INTO user_preferences (key, value_json, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value_json=excluded.value_json,
+                    updated_at=excluded.updated_at
+                """,
+                (key, json.dumps(value), self._now()),
+            )
+
+    def get_preference(self, key: str, default: Any = None) -> Any:
+        with self.database.connect() as db:
+            row = db.execute(
+                "SELECT value_json FROM user_preferences WHERE key = ?",
+                (key,),
+            ).fetchone()
+        if not row:
+            return default
+        try:
+            return json.loads(row["value_json"])
+        except json.JSONDecodeError:
+            return default
+
+    def _now(self) -> str:
+        return datetime.now(UTC).isoformat(timespec="seconds")
+
+    def _optional_bool(self, value: bool | None) -> int | None:
+        return None if value is None else int(value)

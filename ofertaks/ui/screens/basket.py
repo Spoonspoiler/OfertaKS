@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from ofertaks.app.localization import t
+from ofertaks.localization import t
 from ofertaks.services.basket_service import BasketService
+from ofertaks.ui.theme import make_label, make_screen_layout
 
 try:
     from kivy.uix.screenmanager import Screen
@@ -17,36 +18,46 @@ class BasketScreen(Screen):
         from kivy.metrics import dp
         from kivy.uix.boxlayout import BoxLayout
         from kivy.uix.button import Button
-        from kivy.uix.label import Label
         from kivy.uix.textinput import TextInput
 
         super().__init__(**kwargs)
         self.app = app
-        layout = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(8))
-        layout.add_widget(Label(text=t("basket"), size_hint_y=None, height=dp(36), bold=True, font_size="22sp"))
+        frame, layout = make_screen_layout()
+        self.title_label = make_label(text=t("basket"), size_hint_y=None, height=dp(36), bold=True, font_size="22sp")
+        layout.add_widget(self.title_label)
         row = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(8))
         self.input_box = TextInput(hint_text=t("search"), multiline=False)
-        add = Button(text=t("add"), size_hint_x=None, width=dp(86))
-        add.bind(on_release=lambda *_: self._add())
+        self.add_button = Button(text=t("add"), size_hint_x=None, width=dp(86))
+        self.add_button.bind(on_release=lambda *_: self._add())
         row.add_widget(self.input_box)
-        row.add_widget(add)
+        row.add_widget(self.add_button)
         layout.add_widget(row)
         actions = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(6))
-        for label, method in [
-            (t("any_store"), self._cheapest),
-            (t("two_stores"), self._two),
-            (t("one_store"), self._one),
+        self.action_buttons = []
+        for key, method in [
+            ("any_store", self._cheapest),
+            ("two_stores", self._two),
+            ("one_store", self._one),
         ]:
-            button = Button(text=label)
+            button = Button(text=t(key))
             button.bind(on_release=lambda _, fn=method: fn())
             actions.add_widget(button)
-        clear = Button(text=t("clear"), size_hint_x=None, width=dp(78))
-        clear.bind(on_release=lambda *_: self._clear())
-        actions.add_widget(clear)
+            self.action_buttons.append((key, button))
+        self.clear_button = Button(text=t("clear"), size_hint_x=None, width=dp(78))
+        self.clear_button.bind(on_release=lambda *_: self._clear())
+        actions.add_widget(self.clear_button)
         layout.add_widget(actions)
-        self.output = Label(halign="left", valign="top", text_size=(0, None))
+        self.output = make_label(halign="left", valign="top", use_height=False)
         layout.add_widget(self.output)
-        self.add_widget(layout)
+        self.add_widget(frame)
+
+    def translate(self) -> None:
+        self.title_label.text = t("basket")
+        self.input_box.hint_text = t("search")
+        self.add_button.text = t("add")
+        for key, button in self.action_buttons:
+            button.text = t(key)
+        self.clear_button.text = t("clear")
 
     def _service(self) -> BasketService:
         return BasketService(self.app.repository)
@@ -72,7 +83,7 @@ class BasketScreen(Screen):
         plans = self._service().one_store_totals()
         text = []
         for plan in plans:
-            missing = f" missing {len(plan.missing)}" if plan.missing else ""
+            missing = f" {t('missing_items')} {len(plan.missing)}" if plan.missing else ""
             text.append(f"{', '.join(plan.stores):<16} {plan.total:.2f} EUR{missing}")
         self.output.text = "\n".join(text)
 
@@ -84,7 +95,7 @@ class BasketScreen(Screen):
                     f"{choice.query}: {choice.offer.store_name} {choice.offer.offer_price:.2f} EUR"
                 )
             else:
-                lines.append(f"{choice.query}: not matched")
+                lines.append(f"{choice.query}: {t('not_matched')}")
         self.output.text = "\n".join(lines)
 
     def reload(self) -> None:

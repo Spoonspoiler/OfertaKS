@@ -8,11 +8,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from ofertaks.app.config import get_data_dir
+from ofertaks.app.paths import get_app_data_dir
 
 
 def configure_logging() -> Path:
-    log_dir = get_data_dir() / "logs"
+    log_dir = get_app_data_dir() / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / "ofertaks.log"
     logging.basicConfig(
