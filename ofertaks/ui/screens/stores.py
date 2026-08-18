@@ -33,10 +33,22 @@ class StoresScreen(Screen):
 
         while len(self.layout.children) > 1:
             self.layout.remove_widget(self.layout.children[0])
-        for store in self.app.repository.stores():
-            row = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(8))
-            row.add_widget(make_label(text=store["name"]))
-            toggle = Switch(active=bool(store["enabled"]), size_hint_x=None, width=dp(70))
-            toggle.bind(active=lambda _, active, store_id=store["id"]: self.app.repository.set_store_enabled(store_id, active))
-            row.add_widget(toggle)
+        stores = {store["id"]: store for store in self.app.repository.stores()}
+        for source in self.app.repository.source_statuses():
+            row = BoxLayout(size_hint_y=None, height=dp(58), spacing=dp(8))
+            row.add_widget(
+                make_label(
+                    text=f"{source['name']}\n{t(source['status_key'])}",
+                    valign="middle",
+                )
+            )
+            store = stores.get(source["id"])
+            if store:
+                toggle = Switch(active=bool(store["enabled"]), size_hint_x=None, width=dp(70))
+                toggle.bind(
+                    active=lambda _, active, store_id=store["id"]: self.app.repository.set_store_enabled(
+                        store_id, active
+                    )
+                )
+                row.add_widget(toggle)
             self.layout.add_widget(row)

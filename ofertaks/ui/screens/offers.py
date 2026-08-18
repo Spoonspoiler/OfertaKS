@@ -5,6 +5,18 @@ from __future__ import annotations
 from ofertaks.localization import t
 from ofertaks.ui.theme import MUTED, bind_scroll_content_width, make_label, make_screen_layout
 from ofertaks.ui.widgets.offer_card import OfferCardMixin
+from ofertaks.utils.categories import (
+    BAKERY,
+    DAIRY,
+    DRINK,
+    FROZEN,
+    FRUIT_VEGETABLE,
+    MEAT,
+    OTHER_FOOD,
+    PANTRY,
+    SNACKS,
+    category_label_key,
+)
 
 try:
     from kivy.uix.screenmanager import Screen
@@ -23,6 +35,7 @@ class OffersScreen(Screen, OfferCardMixin):
         super().__init__(**kwargs)
         self.app = app
         self.selected_store_id: str | None = None
+        self.selected_category: str | None = None
         self.selected_sort = "best"
         frame, layout = make_screen_layout()
         self.title_label = make_label(text=t("offers"), size_hint_y=None, height=dp(36), bold=True, font_size="22sp")
@@ -33,6 +46,17 @@ class OffersScreen(Screen, OfferCardMixin):
         filters.add_widget(self.store_spinner)
         filters.add_widget(self.sort_spinner)
         layout.add_widget(filters)
+        self.category_scroll = ScrollView(
+            do_scroll_y=False,
+            do_scroll_x=True,
+            size_hint_y=None,
+            height=dp(42),
+            bar_width=0,
+        )
+        self.category_row = BoxLayout(size_hint=(None, 1), spacing=dp(6))
+        self.category_row.bind(minimum_width=self.category_row.setter("width"))
+        self.category_scroll.add_widget(self.category_row)
+        layout.add_widget(self.category_scroll)
         scroll = ScrollView()
         self.offer_list = BoxLayout(orientation="vertical", spacing=dp(8), size_hint_y=None)
         self.offer_list.bind(minimum_height=self.offer_list.setter("height"))
@@ -67,6 +91,40 @@ class OffersScreen(Screen, OfferCardMixin):
         self.sort_spinner.text = next(
             label for label, sort in self.sort_labels.items() if sort == self.selected_sort
         )
+        self.category_labels = {
+            t("all"): None,
+            t(category_label_key(FRUIT_VEGETABLE)): FRUIT_VEGETABLE,
+            t(category_label_key(DAIRY)): DAIRY,
+            t(category_label_key(MEAT)): MEAT,
+            t(category_label_key(PANTRY)): PANTRY,
+            t(category_label_key(DRINK)): DRINK,
+            t(category_label_key(BAKERY)): BAKERY,
+            t(category_label_key(FROZEN)): FROZEN,
+            t(category_label_key(SNACKS)): SNACKS,
+            t(category_label_key(OTHER_FOOD)): OTHER_FOOD,
+        }
+        self._build_category_filters()
+
+    def _build_category_filters(self) -> None:
+        from kivy.metrics import dp
+        from kivy.uix.togglebutton import ToggleButton
+
+        self.category_row.clear_widgets()
+        group = f"offer-categories-{id(self)}"
+        for label, category in self.category_labels.items():
+            button = ToggleButton(
+                text=label,
+                group=group,
+                state="down" if category == self.selected_category else "normal",
+                size_hint=(None, 1),
+                width=dp(max(82, len(label) * 8 + 24)),
+            )
+            button.bind(
+                state=lambda control, state, value=category: self._category_changed(
+                    value, state
+                )
+            )
+            self.category_row.add_widget(button)
 
     def _store_changed(self, _spinner, text: str) -> None:
         self.selected_store_id = self.store_labels.get(text)
@@ -76,11 +134,19 @@ class OffersScreen(Screen, OfferCardMixin):
         self.selected_sort = self.sort_labels.get(text, "best")
         self.reload()
 
+    def _category_changed(self, category: str | None, state: str) -> None:
+        if state != "down" or category == self.selected_category:
+            return
+        self.selected_category = category
+        self.reload()
+
     def reload(self) -> None:
         from kivy.metrics import dp
 
+        self._offer_context_cache = {}
         offers = self.app.repository.list_offers(
             store_id=self.selected_store_id,
+            category=self.selected_category,
             sort=self.selected_sort,
             limit=250,
         )

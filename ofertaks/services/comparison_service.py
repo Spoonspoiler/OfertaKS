@@ -15,6 +15,38 @@ class DealScore:
     reasons: tuple[str, ...]
 
 
+@dataclass(slots=True)
+class PriceStatus:
+    """Explain the current price against a product's observed history."""
+
+    key: str
+    color_key: str
+    delta_percent: float | None
+    historical_average: float | None
+
+
+def classify_price_status(current_price: float, history: HistoryStats | None) -> PriceStatus:
+    """Classify a price with stable, human-readable history thresholds.
+
+    The comparison is intentionally based on the recent observed average. Three
+    observations are required before making a positive or negative claim.
+    """
+
+    if not history or not history.enough_history or not history.average or history.average <= 0:
+        return PriceStatus("not_enough_history", "neutral", None, None)
+
+    delta = round((current_price - history.average) / history.average * 100, 1)
+    if delta <= -20:
+        return PriceStatus("price_exceptional", "exceptional", delta, history.average)
+    if delta <= -5:
+        return PriceStatus("price_cheap", "cheap", delta, history.average)
+    if delta <= 5:
+        return PriceStatus("price_normal", "neutral", delta, history.average)
+    if delta <= 15:
+        return PriceStatus("price_expensive", "expensive", delta, history.average)
+    return PriceStatus("price_high", "high", delta, history.average)
+
+
 def score_offer(offer: Offer, history: HistoryStats | None = None) -> DealScore:
     score = 0.0
     reasons: list[str] = []

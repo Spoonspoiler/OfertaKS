@@ -36,6 +36,13 @@ class LocalizationTests(TestCase):
         with patch.object(locale, "getlocale", return_value=("de_DE", "UTF-8")):
             self.assertEqual(detect_system_language(), "en")
 
+    def test_every_supported_language_has_the_same_visible_keys(self):
+        from ofertaks.localization.i18n import TRANSLATIONS
+
+        english_keys = set(TRANSLATIONS["en"])
+        self.assertEqual(set(TRANSLATIONS["fr"]), english_keys)
+        self.assertEqual(set(TRANSLATIONS["sq"]), english_keys)
+
     def test_manual_preference_persists(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Repository(Database(Path(tmp) / "db.sqlite3"))

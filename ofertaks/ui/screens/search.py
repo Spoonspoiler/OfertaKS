@@ -50,6 +50,7 @@ class SearchScreen(Screen, OfferCardMixin):
         from kivy.metrics import dp
 
         self.results.clear_widgets()
+        self._offer_context_cache = {}
         if not self.query:
             return
         offers = self.app.repository.search_offers(self.query)

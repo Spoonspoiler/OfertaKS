@@ -1,6 +1,6 @@
 """SQLite schema for OfertaKS."""
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA_SQL = """
 PRAGMA foreign_keys = ON;
@@ -177,6 +177,27 @@ CREATE TABLE IF NOT EXISTS merchant_price_observations (
     notes TEXT
 );
 
+CREATE TABLE IF NOT EXISTS user_price_observations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_id INTEGER REFERENCES products(id),
+    merchant_id TEXT REFERENCES merchants(id),
+    merchant_name TEXT NOT NULL,
+    raw_name TEXT NOT NULL,
+    normalized_name TEXT NOT NULL,
+    price REAL NOT NULL CHECK(price > 0),
+    quantity REAL,
+    unit TEXT,
+    origin_country TEXT,
+    origin_region TEXT,
+    origin_source TEXT NOT NULL DEFAULT 'UNKNOWN',
+    origin_confidence TEXT NOT NULL DEFAULT 'unknown',
+    photo_path TEXT,
+    quality TEXT,
+    notes TEXT,
+    observed_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS quality_observations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     product_id INTEGER REFERENCES products(id),
@@ -235,6 +256,8 @@ CREATE INDEX IF NOT EXISTS idx_pantry_normalized ON pantry_items(normalized_name
 CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_lookup ON recipe_ingredients(normalized_name);
 CREATE INDEX IF NOT EXISTS idx_merchant_price_freshness
 ON merchant_price_observations(merchant_id, normalized_name, observed_at);
+CREATE INDEX IF NOT EXISTS idx_user_price_product
+ON user_price_observations(product_id, observed_at);
 CREATE INDEX IF NOT EXISTS idx_quality_product_merchant
 ON quality_observations(product_id, merchant_id, observed_at);
 CREATE INDEX IF NOT EXISTS idx_origin_product

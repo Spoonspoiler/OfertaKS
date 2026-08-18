@@ -42,6 +42,36 @@ STORE_CONFIG = {
     },
 }
 
+# This is a capability declaration, not a claim that every source currently
+# provides a complete catalogue. Albi is deliberately tracked here without a
+# scraper entry so it remains visible to users without generating fake offers.
+SOURCE_STATUS_CONFIG = (
+    {
+        "id": "etc",
+        "name": "ETC",
+        "availability": "live",
+        "status_key": "store_status_live",
+    },
+    {
+        "id": "viva_fresh",
+        "name": "Viva Fresh",
+        "availability": "partial",
+        "status_key": "store_status_viva_partial",
+    },
+    {
+        "id": "interex",
+        "name": "Interex",
+        "availability": "partial",
+        "status_key": "store_status_interex_partial",
+    },
+    {
+        "id": "albi",
+        "name": "Albi",
+        "availability": "not_implemented",
+        "status_key": "store_status_not_implemented",
+    },
+)
+
 
 def get_data_dir() -> Path:
     """Return a writable app data directory on desktop and Android."""

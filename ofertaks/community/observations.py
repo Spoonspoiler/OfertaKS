@@ -47,6 +47,15 @@ class OriginSummary:
     explanation: str
 
 
+@dataclass(slots=True)
+class OriginDisplay:
+    country: str | None
+    region: str | None
+    source_key: str
+    confidence_key: str
+    explanation_key: str
+
+
 def freshness_state(
     observed_at: datetime,
     category: str | None = None,
@@ -142,4 +151,41 @@ def summarize_origin(observations: list[OriginObservation]) -> OriginSummary:
         source=best.source,
         confidence=round(best.confidence, 2),
         explanation=explanation,
+    )
+
+
+def origin_display_for_offer(
+    offer,
+    observations: list[OriginObservation] | None = None,
+) -> OriginDisplay:
+    """Choose transparent origin metadata without upgrading uncertain evidence."""
+
+    observations = observations or []
+    if observations:
+        summary = summarize_origin(observations)
+        if summary.country:
+            source = (summary.source or "UNKNOWN").casefold()
+            verified_sources = {"store_label", "product_packaging", "official_data", "merchant"}
+            confidence = "verified" if source in verified_sources and summary.confidence >= 0.7 else "probable"
+            return OriginDisplay(
+                summary.country,
+                summary.region,
+                f"origin_source_{source}",
+                f"origin_confidence_{confidence}",
+                "origin_explanation_observation",
+            )
+    if getattr(offer, "origin_country", None):
+        return OriginDisplay(
+            offer.origin_country,
+            getattr(offer, "origin_region", None),
+            "origin_source_flyer",
+            "origin_confidence_probable",
+            "origin_explanation_flyer",
+        )
+    return OriginDisplay(
+        None,
+        None,
+        "origin_source_unknown",
+        "origin_confidence_unknown",
+        "origin_explanation_unknown",
     )

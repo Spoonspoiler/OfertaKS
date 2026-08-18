@@ -18,3 +18,8 @@
 - Manual language selection is stored locally in SQLite `user_preferences` and is applied on the next app start; current Kivy screens also refresh labels live where practical.
 - Fixed the Kivy label layout regression where `text_size=(0, None)` collapsed visible text into narrow vertical columns; screens and bottom navigation are now centered with sensible max width while remaining mobile-safe.
 - Android packaging has not been validated by an actual GitHub Actions run yet, so the first remote build may still reveal Buildozer/python-for-android issues.
+- Food browsing now excludes non-food categories by default while retaining them in SQLite for later explicit use. Legacy `FOOD` records appear under the Pantry filter; unknown categories remain excluded until there is deterministic food evidence.
+- Added history-based price-status labels with fixed thresholds: at least 20% below average is exceptional, 5-20% below is cheaper, within 5% is normal, 5-15% above is somewhat expensive, and more than 15% above is high. At least three observations are required.
+- Store/source capability is explicit in Stores and Settings: ETC is live, Viva Fresh is partial/image-based, Interex is partial/PDF metadata, and Albi is not implemented. These labels do not fabricate unsupported offers.
+- Settings now renders a compact diagnostic summary first and leaves raw JSON behind an explicit secondary action.
+- Added a local user price-update form with optional evidence-path and quality fields. It writes a `user_price_observations` row and records supplied origin as separate provenance evidence; no community sync or camera capture is implied.

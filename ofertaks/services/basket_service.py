@@ -39,7 +39,9 @@ class BasketService:
         self.min_score = min_score
 
     def _candidates(self, query: str) -> list[tuple[Offer, float]]:
-        candidates = self.repository.search_offers(query, limit=50)
+        # Basket planning is a domain service rather than the food browsing UI.
+        # It keeps access to the retained full catalogue for existing lists.
+        candidates = self.repository.search_offers(query, limit=50, food_only=False)
         scored = [(offer, match_score(query, offer.raw_name)) for offer in candidates]
         scored = [(offer, score) for offer, score in scored if score >= self.min_score]
         return sorted(scored, key=lambda pair: (-pair[1], pair[0].offer_price))

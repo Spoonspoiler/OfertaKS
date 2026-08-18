@@ -72,12 +72,25 @@ class HomeScreen(Screen, OfferCardMixin):
         latest = self.app.repository.latest_sync_label()
         self.last_sync_label.text = f"{t('last_sync')}: {latest or t('offline_data')}"
         self.offer_list.clear_widgets()
-        offers = self.app.repository.list_offers(limit=30)
-        if not offers:
+        self._offer_context_cache = {}
+        best_offers = self.app.repository.list_offers(limit=12)
+        if not best_offers:
             self.offer_list.add_widget(make_label(text=t("no_offers"), size_hint_y=None, height=dp(44), color=MUTED))
             return
-        for offer in offers:
+        for offer in best_offers:
             self.offer_list.add_widget(self.build_offer_card(offer, self.app.show_product))
+        recent = self.app.repository.list_offers(sort="newest", limit=8)
+        if recent:
+            self.offer_list.add_widget(
+                make_label(
+                    text=t("recently_updated"),
+                    size_hint_y=None,
+                    height=dp(30),
+                    bold=True,
+                )
+            )
+            for offer in recent:
+                self.offer_list.add_widget(self.build_offer_card(offer, self.app.show_product))
 
     def sync_status_changed(self, statuses: dict[str, str]) -> None:
         if not statuses:

@@ -16,6 +16,7 @@ Raw scraped and community observation data is evidence. It must be retained and 
 - `pantry_items`: local user-owned food.
 - `recipes`, `recipe_ingredients`, `recipe_tags`: local recipe library.
 - `merchant_price_observations`: manual/community price evidence.
+- `user_price_observations`: local user-entered price updates, including a merchant name, optional merchant ID, optional photo path, origin provenance/confidence, quality, notes, and timestamp. These are not live scraped offers and are not synchronized yet.
 - `quality_observations`: product + merchant + time quality evidence.
 - `origin_observations`: product origin evidence with source and confidence.
 - `community_sync_state`: optional future server sync state.
@@ -24,6 +25,10 @@ Raw scraped and community observation data is evidence. It must be retained and 
 ## Origin
 
 Merchant location never implies product origin. Origin requires evidence such as store labels, packaging, flyer text, merchant claims, official data, or user observations.
+
+## Food Catalog Policy
+
+The main Home, Offers, and Search views are food-only. Food categories are detected deterministically from normalized product/source text: Fruits & Vegetables, Dairy, Meat & Fish, Pantry, Drinks, Bakery, Frozen, Snacks, and Other Food. Legacy `FOOD` values are shown under Pantry. Household, hygiene, baby, and unknown categories remain stored but hidden from default browsing; domain services can request the full retained catalog where appropriate.
 
 ## Freshness
 

@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import UTC, datetime
 from typing import Any, Iterable
 
-from ofertaks.app.config import STORE_CONFIG
+from ofertaks.app.config import SOURCE_STATUS_CONFIG, STORE_CONFIG
 from ofertaks.app.smoke import app_smoke_check
 from ofertaks.database.database import Database
-from ofertaks.models.community import OriginObservation, QualityObservation
+from ofertaks.models.community import OriginObservation, QualityObservation, UserPriceObservation
 from ofertaks.models.merchant import Chain, Merchant
 from ofertaks.models.offer import Offer
 from ofertaks.models.recipe import Recipe, RecipeIngredient
 from ofertaks.normalization.product_normalizer import normalize_product_name
+from ofertaks.utils.categories import category_filter_values
 
 
 class Repository:
@@ -255,6 +257,7 @@ class Repository:
         category: str | None = None,
         sort: str = "best",
         limit: int | None = 200,
+        food_only: bool = True,
     ) -> list[Offer]:
         where = []
         params: list[Any] = []
@@ -262,8 +265,13 @@ class Repository:
             where.append("o.store_id = ?")
             params.append(store_id)
         if category:
-            where.append("o.category = ?")
-            params.append(category)
+            values = category_filter_values(category)
+            where.append(f"o.category IN ({','.join('?' for _ in values)})")
+            params.extend(values)
+        elif food_only:
+            values = category_filter_values(None)
+            where.append(f"o.category IN ({','.join('?' for _ in values)})")
+            params.extend(values)
         sql = """
             SELECT o.*, s.name AS store_name
             FROM offers o
@@ -285,21 +293,37 @@ class Repository:
         with self.database.connect() as db:
             return [Offer.from_row(row, row["store_name"]) for row in db.execute(sql, params)]
 
-    def search_offers(self, query: str, limit: int = 100) -> list[Offer]:
+    def search_offers(
+        self,
+        query: str,
+        limit: int = 100,
+        food_only: bool = True,
+    ) -> list[Offer]:
         like = f"%{query.casefold()}%"
+        where = [
+            """(
+                lower(o.raw_name) LIKE ?
+                OR lower(o.normalized_name) LIKE ?
+                OR lower(COALESCE(o.brand, '')) LIKE ?
+            )"""
+        ]
+        params: list[Any] = [like, like, like]
+        if food_only:
+            values = category_filter_values(None)
+            where.append(f"o.category IN ({','.join('?' for _ in values)})")
+            params.extend(values)
+        params.append(limit)
         with self.database.connect() as db:
             rows = db.execute(
-                """
+                f"""
                 SELECT o.*, s.name AS store_name
                 FROM offers o
                 JOIN stores s ON s.id = o.store_id
-                WHERE lower(o.raw_name) LIKE ?
-                   OR lower(o.normalized_name) LIKE ?
-                   OR lower(COALESCE(o.brand, '')) LIKE ?
+                WHERE {' AND '.join(where)}
                 ORDER BY COALESCE(o.unit_price, o.offer_price) ASC
                 LIMIT ?
                 """,
-                (like, like, like, limit),
+                params,
             )
             return [Offer.from_row(row, row["store_name"]) for row in rows]
 
@@ -316,6 +340,37 @@ class Repository:
                 (offer.store_id, offer.raw_name, offer.normalized_name),
             ).fetchone()
             return int(row["id"]) if row else None
+
+    def offers_for_product(
+        self,
+        product_id: int,
+        *,
+        food_only: bool = True,
+        limit: int = 30,
+    ) -> list[Offer]:
+        """Return current store offers linked to the same canonical product."""
+
+        where = ["a.product_id = ?"]
+        params: list[Any] = [product_id]
+        if food_only:
+            values = category_filter_values(None)
+            where.append(f"o.category IN ({','.join('?' for _ in values)})")
+            params.extend(values)
+        params.append(limit)
+        sql = f"""
+            SELECT DISTINCT o.*, s.name AS store_name
+            FROM offers o
+            JOIN stores s ON s.id = o.store_id
+            JOIN product_aliases a
+              ON a.store_id = o.store_id
+             AND a.raw_name = o.raw_name
+             AND a.normalized_name = o.normalized_name
+            WHERE {' AND '.join(where)}
+            ORDER BY COALESCE(o.unit_price, o.offer_price) ASC, s.name
+            LIMIT ?
+        """
+        with self.database.connect() as db:
+            return [Offer.from_row(row, row["store_name"]) for row in db.execute(sql, params)]
 
     def price_history(self, product_id: int, days: int | None = None) -> list[dict[str, Any]]:
         sql = "SELECT * FROM price_history WHERE product_id = ?"
@@ -381,18 +436,78 @@ class Repository:
             merchant_count = db.execute("SELECT COUNT(*) AS count FROM merchants").fetchone()[
                 "count"
             ]
+            total_offer_count = db.execute("SELECT COUNT(*) AS count FROM offers").fetchone()[
+                "count"
+            ]
+            food_values = category_filter_values(None)
+            food_offer_count = db.execute(
+                f"SELECT COUNT(*) AS count FROM offers WHERE category IN ({','.join('?' for _ in food_values)})",
+                food_values,
+            ).fetchone()["count"]
             community_sync = [
                 dict(row)
                 for row in db.execute("SELECT * FROM community_sync_state ORDER BY source")
             ]
+        source_statuses = self._source_statuses(runs, counts)
         return {
             "stores": stores,
             "last_runs": runs,
             "offer_counts": counts,
             "merchant_count": merchant_count,
+            "total_offer_count": total_offer_count,
+            "food_offer_count": food_offer_count,
             "community_sync": community_sync,
+            "source_statuses": source_statuses,
+            "database_writable": self._database_writable(),
             "app_smoke": app_smoke_check(self.database.path.parent / "cache"),
         }
+
+    def diagnostics_summary(self) -> dict[str, Any]:
+        """Return a compact diagnostics shape for the Settings screen."""
+
+        diagnostics = self.diagnostics()
+        smoke = diagnostics["app_smoke"]
+        sources = diagnostics["source_statuses"]
+        return {
+            "store_count": len(sources),
+            "live_store_count": sum(item["availability"] == "live" for item in sources),
+            "total_offer_count": diagnostics["total_offer_count"],
+            "food_offer_count": diagnostics["food_offer_count"],
+            "merchant_count": diagnostics["merchant_count"],
+            "last_sync": self.latest_sync_label(),
+            "cache_writable": smoke["cache_directory_writable"],
+            "translation_service": smoke["translation_service"],
+            "database_writable": diagnostics["database_writable"],
+            "last_scraper_runs": sources,
+        }
+
+    def source_statuses(self) -> list[dict[str, Any]]:
+        """Return source capability and latest scraper state for transparent UI."""
+
+        return self.diagnostics()["source_statuses"]
+
+    def _source_statuses(
+        self,
+        runs: list[dict[str, Any]],
+        offer_counts: dict[str, int],
+    ) -> list[dict[str, Any]]:
+        by_store = {run["store_id"]: run for run in runs}
+        return [
+            {
+                **source,
+                "offer_count": offer_counts.get(source["id"], 0),
+                "last_run": by_store.get(source["id"]),
+            }
+            for source in SOURCE_STATUS_CONFIG
+        ]
+
+    def _database_writable(self) -> bool:
+        try:
+            with self.database.connect() as db:
+                db.execute("UPDATE user_preferences SET updated_at = updated_at WHERE 1 = 0")
+            return True
+        except (OSError, sqlite3.Error):
+            return False
 
     def add_merchant(self, merchant: Merchant) -> str:
         now = self._now()
@@ -649,6 +764,104 @@ class Repository:
             sql += " WHERE product_id = ?"
             params.append(product_id)
         sql += " ORDER BY observed_at DESC"
+        with self.database.connect() as db:
+            return [dict(row) for row in db.execute(sql, params)]
+
+    def origin_observations_for_offer(self, offer: Offer) -> list[OriginObservation]:
+        product_id = self.find_product_id_for_offer(offer)
+        if product_id is None:
+            return []
+        return [
+            OriginObservation(
+                product_id=row["product_id"],
+                merchant_id=row["merchant_id"],
+                raw_name=row["raw_name"],
+                normalized_name=row["normalized_name"],
+                country=row["country"],
+                region=row["region"],
+                producer=row["producer"],
+                source=row["source"],
+                confidence=row["confidence"],
+                observed_at=datetime.fromisoformat(row["observed_at"]),
+            )
+            for row in self.list_origin_observations(product_id)
+        ]
+
+    def record_user_price_observation(self, observation: UserPriceObservation) -> int:
+        """Store a local price update without pretending it is a live store price."""
+
+        if observation.price <= 0:
+            raise ValueError("Price observations must be greater than zero")
+        if not observation.merchant_name.strip():
+            raise ValueError("A merchant name is required")
+        with self.database.connect() as db:
+            cursor = db.execute(
+                """
+                INSERT INTO user_price_observations (
+                    product_id, merchant_id, merchant_name, raw_name, normalized_name,
+                    price, quantity, unit, origin_country, origin_region, origin_source,
+                    origin_confidence, photo_path, quality, notes, observed_at, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    observation.product_id,
+                    observation.merchant_id,
+                    observation.merchant_name.strip(),
+                    observation.raw_name,
+                    observation.normalized_name,
+                    observation.price,
+                    observation.quantity,
+                    observation.unit,
+                    observation.origin_country or None,
+                    observation.origin_region or None,
+                    observation.origin_source.upper(),
+                    observation.origin_confidence.casefold(),
+                    observation.photo_path or None,
+                    observation.quality or None,
+                    observation.notes or None,
+                    observation.observed_at.isoformat(timespec="seconds"),
+                    self._now(),
+                ),
+            )
+            if observation.origin_country:
+                confidence = {
+                    "verified": 0.9,
+                    "probable": 0.6,
+                    "unknown": 0.4,
+                }.get(observation.origin_confidence.casefold(), 0.4)
+                db.execute(
+                    """
+                    INSERT INTO origin_observations (
+                        product_id, merchant_id, raw_name, normalized_name, country, region,
+                        producer, source, confidence, observed_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
+                    """,
+                    (
+                        observation.product_id,
+                        observation.merchant_id,
+                        observation.raw_name,
+                        observation.normalized_name,
+                        observation.origin_country,
+                        observation.origin_region or None,
+                        observation.origin_source.upper(),
+                        confidence,
+                        observation.observed_at.isoformat(timespec="seconds"),
+                    ),
+                )
+            return int(cursor.lastrowid)
+
+    def list_user_price_observations(
+        self,
+        product_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM user_price_observations"
+        params: list[Any] = []
+        if product_id is not None:
+            sql += " WHERE product_id = ?"
+            params.append(product_id)
+        sql += " ORDER BY observed_at DESC, id DESC"
         with self.database.connect() as db:
             return [dict(row) for row in db.execute(sql, params)]
 

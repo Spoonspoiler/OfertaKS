@@ -46,6 +46,7 @@ class OfertaKSApp(App if App is not None else object):
         from ofertaks.ui.screens.home import HomeScreen
         from ofertaks.ui.screens.offers import OffersScreen
         from ofertaks.ui.screens.product_detail import ProductDetailScreen
+        from ofertaks.ui.screens.price_update import PriceUpdateScreen
         from ofertaks.ui.screens.search import SearchScreen
         from ofertaks.ui.screens.settings import SettingsScreen
         from ofertaks.ui.screens.stores import StoresScreen
@@ -61,6 +62,7 @@ class OfertaKSApp(App if App is not None else object):
             "stores": StoresScreen(app=self, name="stores"),
             "settings": SettingsScreen(app=self, name="settings"),
             "product_detail": ProductDetailScreen(app=self, name="product_detail"),
+            "price_update": PriceUpdateScreen(app=self, name="price_update"),
         }
         for screen in self.screens.values():
             self.screen_manager.add_widget(screen)
@@ -76,7 +78,8 @@ class OfertaKSApp(App if App is not None else object):
         bar = BoxLayout(size_hint=(None, 1), width=dp(760), spacing=dp(2), padding=dp(4))
 
         def update_width(instance, width):
-            bar.width = min(max(width, Window.width), dp(760))
+            available_width = Window.width if width <= dp(120) else width
+            bar.width = min(available_width, dp(760))
 
         wrapper.bind(width=update_width)
         update_width(wrapper, wrapper.width)

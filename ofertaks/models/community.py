@@ -32,3 +32,25 @@ class OriginObservation:
     region: str | None = None
     producer: str | None = None
     confidence: float = 0.4
+
+
+@dataclass(slots=True)
+class UserPriceObservation:
+    """A local, user-submitted price update awaiting any future sync."""
+
+    merchant_name: str
+    raw_name: str
+    normalized_name: str
+    price: float
+    observed_at: datetime
+    product_id: int | None = None
+    merchant_id: str | None = None
+    quantity: float | None = None
+    unit: str | None = None
+    origin_country: str | None = None
+    origin_region: str | None = None
+    origin_source: str = "UNKNOWN"
+    origin_confidence: str = "unknown"
+    photo_path: str | None = None
+    quality: str | None = None
+    notes: str | None = None
