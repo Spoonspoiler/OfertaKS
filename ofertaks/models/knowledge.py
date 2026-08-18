@@ -28,6 +28,20 @@ UNRELATED = "UNRELATED"
 CONTRIBUTOR = "CONTRIBUTOR"
 ADMIN = "ADMIN"
 
+GTIN_8 = "GTIN_8"
+GTIN_12 = "GTIN_12"
+GTIN_13 = "GTIN_13"
+GTIN_14 = "GTIN_14"
+GTIN_UNKNOWN = "UNKNOWN"
+
+VERIFIED_GTIN = "VERIFIED_GTIN"
+PROVISIONAL_NO_GTIN = "PROVISIONAL_NO_GTIN"
+GTIN_CONFLICT = "GTIN_CONFLICT"
+GTIN_NOT_APPLICABLE = "GTIN_NOT_APPLICABLE"
+
+PACKAGED = "PACKAGED"
+FRESH_BULK_ARTISANAL = "FRESH_BULK_ARTISANAL"
+
 
 @dataclass(slots=True)
 class CanonicalProduct:
@@ -50,6 +64,11 @@ class CanonicalProduct:
     origin_country: str | None = None
     origin_region: str | None = None
     barcode_gtin: str | None = None
+    gtin_type: str = GTIN_UNKNOWN
+    gtin_status: str = PROVISIONAL_NO_GTIN
+    gtin_verified_at: datetime | None = None
+    gtin_source: str | None = None
+    identity_strategy: str = PACKAGED
     official_product_url: str | None = None
     official_image_url: str | None = None
     active: bool = True

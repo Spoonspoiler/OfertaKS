@@ -20,17 +20,17 @@ except Exception:  # pragma: no cover
 
 class PriceHistoryGraph:
     def __init__(self, **kwargs):
-        from kivy.graphics import Color, Line
+        from kivy.graphics import Color, Ellipse, Line
         from kivy.uix.widget import Widget
 
         class _Graph(Widget):
             def __init__(self, **inner_kwargs):
                 super().__init__(**inner_kwargs)
-                self.points = []
+                self.observations = []
                 self.bind(pos=self._draw, size=self._draw)
 
-            def set_prices(self, prices):
-                self.points = list(prices)
+            def set_observations(self, observations):
+                self.observations = [row for row in observations if row.get("price") is not None]
                 self._draw()
 
             def _draw(self, *_args):
@@ -38,18 +38,28 @@ class PriceHistoryGraph:
                 with self.canvas:
                     Color(0.82, 0.85, 0.84, 1)
                     Line(rectangle=(self.x, self.y, self.width, self.height), width=1)
-                    if len(self.points) < 2:
+                    if not self.observations:
                         return
-                    low = min(self.points)
-                    high = max(self.points)
+                    prices = [float(row["price"]) for row in self.observations]
+                    low = min(prices)
+                    high = max(prices)
                     span = high - low or 1
                     coords = []
-                    for idx, price in enumerate(self.points):
-                        x = self.x + (idx / (len(self.points) - 1)) * self.width
+                    count = len(prices)
+                    for idx, price in enumerate(prices):
+                        x = self.center_x if count == 1 else self.x + (idx / (count - 1)) * self.width
                         y = self.y + ((price - low) / span) * self.height
                         coords.extend([x, y])
                     Color(0.10, 0.46, 0.34, 1)
-                    Line(points=coords, width=2)
+                    if len(coords) >= 4:
+                        Line(points=coords, width=2)
+                    for index, row in enumerate(self.observations):
+                        x, y = coords[index * 2 : index * 2 + 2]
+                        if row.get("observation_context") in {"PROMOTION", "CLEARANCE"}:
+                            Color(0.90, 0.47, 0.12, 1)
+                        else:
+                            Color(0.10, 0.46, 0.34, 1)
+                        Ellipse(pos=(x - 4, y - 4), size=(8, 8))
 
         self.widget = _Graph(**kwargs)
 
@@ -92,10 +102,13 @@ class ProductDetailScreen(Screen):
             text=t("price_history"), size_hint_y=None, height=dp(30), bold=True
         )
         self.history_explanation = make_label(size_hint_y=None, height=dp(24), color=MUTED)
+        self.graph_legend = make_label(size_hint_y=None, height=dp(20), color=MUTED, font_size="11sp")
         graph_wrapper = PriceHistoryGraph(size_hint_y=None, height=dp(150))
         self.graph = graph_wrapper.widget
         self.update_button = Button(text=t("update_price"), size_hint_y=None, height=dp(46))
         self.update_button.bind(on_release=lambda *_: self._open_price_update())
+        self.scan_button = Button(text=t("scan_product"), size_hint_y=None, height=dp(42))
+        self.scan_button.bind(on_release=lambda *_: self.app.show_barcode_scan(return_screen="product_detail"))
         self.map_button = Button(text=t("show_on_map"), size_hint_y=None, height=dp(42))
         self.map_button.bind(on_release=lambda *_: self._show_on_map())
         for widget in (
@@ -110,8 +123,10 @@ class ProductDetailScreen(Screen):
             self.origin_explanation,
             self.history_label,
             self.history_explanation,
+            self.graph_legend,
             self.graph,
             self.update_button,
+            self.scan_button,
             self.map_button,
         ):
             content.add_widget(widget)
@@ -123,7 +138,9 @@ class ProductDetailScreen(Screen):
         self.status_heading.text = t("price_status")
         self.origin_heading.text = t("origin")
         self.history_label.text = t("price_history")
+        self.graph_legend.text = f"{t('price_graph_regular')} | {t('price_graph_promotion')}"
         self.update_button.text = t("update_price")
+        self.scan_button.text = t("scan_product")
         self.map_button.text = t("show_on_map")
 
     def set_offer(self, offer) -> None:
@@ -219,10 +236,8 @@ class ProductDetailScreen(Screen):
             self.history_explanation.text = t("price_history_explanation")
         else:
             self.history_explanation.text = t("price_integrity_insufficient_history")
-        self.graph.set_prices(
-            [row["price"] for row in self.app.repository.historical_prices(product_id)]
-            if product_id is not None
-            else []
+        self.graph.set_observations(
+            self.app.repository.historical_prices(product_id) if product_id is not None else []
         )
 
     def _open_price_update(self) -> None:

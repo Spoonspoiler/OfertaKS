@@ -15,6 +15,7 @@ from ofertaks.models.knowledge import (
     ValidationTask,
 )
 from ofertaks.product_sources.base import OfficialProductMetadata
+from ofertaks.normalization.gtin import validate_gtin
 from ofertaks.utils.text import comparable_text
 
 
@@ -80,6 +81,25 @@ class ProductEnrichmentService:
         for field_name, value in values.items():
             if value in {None, ""}:
                 continue
+            if field_name == "barcode_gtin":
+                try:
+                    value = validate_gtin(str(value))
+                except ValueError:
+                    self.repository.add_product_attribute_evidence(
+                        ProductAttributeEvidence(
+                            id=None,
+                            product_id=product_id,
+                            field_name=field_name,
+                            value=str(value),
+                            source_id=source_id,
+                            source_type=metadata.source_type,
+                            confidence=1.0,
+                            confidence_state=CONFIDENCE_CONFLICTED,
+                            created_at=datetime.now(UTC),
+                        )
+                    )
+                    conflicts.append(field_name)
+                    continue
             existing_key = f"{field_name}_name" if field_name in self._ORGANIZATION_FIELDS else field_name
             existing = product.get(existing_key)
             conflict = existing not in {None, ""} and comparable_text(str(existing)) != comparable_text(str(value))

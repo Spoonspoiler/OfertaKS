@@ -157,7 +157,18 @@ class OfferCardMixin:
         if cache is None:
             cache = {}
             self._offer_context_cache = cache
-        key = (offer.store_id, offer.raw_name, offer.normalized_name)
+        # A store can legitimately list the same display name at several pack
+        # sizes or prices.  The price and timestamp must therefore be part of
+        # the cached assessment; otherwise one card can borrow another card's
+        # verdict.
+        key = (
+            offer.store_id,
+            offer.raw_name,
+            offer.normalized_name,
+            offer.offer_price,
+            offer.unit_price,
+            offer.scraped_at,
+        )
         if key in cache:
             return cache[key]
         history = None

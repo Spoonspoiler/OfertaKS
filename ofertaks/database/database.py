@@ -16,6 +16,16 @@ from ofertaks.database.schema import (
     SCHEMA_SQL,
     SCHEMA_VERSION,
 )
+from ofertaks.normalization.gtin import (
+    FRESH_BULK_ARTISANAL,
+    GTIN_CONFLICT,
+    GTIN_NOT_APPLICABLE,
+    PROVISIONAL_NO_GTIN,
+    VERIFIED_GTIN,
+    gtin_type,
+    identity_strategy_for,
+    validate_gtin,
+)
 
 
 class _ConnectionManager:
@@ -61,6 +71,7 @@ class Database:
             self._migrate_offer_columns(connection)
             self._migrate_merchant_columns(connection)
             self._migrate_product_columns(connection)
+            self._migrate_gtin_identity(connection)
             self._migrate_price_history_columns(connection)
             self._migrate_product_aliases(connection)
             self._backfill_legacy_offer_evidence(connection)
@@ -113,6 +124,89 @@ class Database:
             WHERE brand_id IS NULL AND brand IS NOT NULL AND TRIM(brand) != ''
             """
         )
+
+    def _migrate_gtin_identity(self, connection: sqlite3.Connection) -> None:
+        """Classify legacy codes without deleting or silently merging any product."""
+
+        connection.execute("DROP INDEX IF EXISTS idx_products_gtin")
+        connection.execute("DROP INDEX IF EXISTS idx_products_unique")
+        rows = connection.execute(
+            "SELECT id, barcode_gtin, category, active, gtin_status FROM products ORDER BY id"
+        ).fetchall()
+        seen: set[str] = set()
+        now = datetime.now(UTC).isoformat(timespec="seconds")
+        for row in rows:
+            raw_code = row["barcode_gtin"]
+            strategy = identity_strategy_for(row["category"], raw_code)
+            if not raw_code:
+                if row["gtin_status"] == GTIN_CONFLICT:
+                    connection.execute(
+                        "UPDATE products SET identity_strategy = ? WHERE id = ?",
+                        (strategy, row["id"]),
+                    )
+                    continue
+                status = GTIN_NOT_APPLICABLE if strategy == FRESH_BULK_ARTISANAL else PROVISIONAL_NO_GTIN
+                connection.execute(
+                    "UPDATE products SET gtin_type = 'UNKNOWN', gtin_status = ?, identity_strategy = ? WHERE id = ?",
+                    (status, strategy, row["id"]),
+                )
+                continue
+            try:
+                code = validate_gtin(raw_code)
+            except ValueError:
+                connection.execute(
+                    "UPDATE products SET gtin_status = ?, gtin_type = 'UNKNOWN', identity_strategy = ? WHERE id = ?",
+                    (GTIN_CONFLICT, strategy, row["id"]),
+                )
+                self._ensure_gtin_validation_task(connection, row["id"], raw_code, "invalid")
+                continue
+            if code in seen:
+                connection.execute(
+                    "UPDATE products SET barcode_gtin = ?, gtin_status = ?, gtin_type = ?, identity_strategy = ? WHERE id = ?",
+                    (code, GTIN_CONFLICT, gtin_type(code), strategy, row["id"]),
+                )
+                self._ensure_gtin_validation_task(connection, row["id"], code, "duplicate")
+                continue
+            seen.add(code)
+            connection.execute(
+                """
+                UPDATE products
+                SET barcode_gtin = ?, gtin_type = ?, gtin_status = ?,
+                    gtin_verified_at = COALESCE(gtin_verified_at, ?),
+                    identity_strategy = ?
+                WHERE id = ?
+                """,
+                (code, gtin_type(code), VERIFIED_GTIN, now, strategy, row["id"]),
+            )
+
+    @staticmethod
+    def _ensure_gtin_validation_task(
+        connection: sqlite3.Connection, product_id: int, value: str, reason: str
+    ) -> None:
+        payload = f'{{"gtin":"{value}","reason":"{reason}"}}'
+        existing = connection.execute(
+            """
+            SELECT id FROM validation_tasks
+            WHERE task_type = 'GTIN_REVIEW' AND candidate_product_id = ? AND payload_json = ?
+              AND status = 'OPEN'
+            LIMIT 1
+            """,
+            (product_id, payload),
+        ).fetchone()
+        if existing is None:
+            connection.execute(
+                """
+                INSERT INTO validation_tasks (
+                    task_type, candidate_product_id, payload_json, status, usefulness_score, created_at, updated_at
+                ) VALUES ('GTIN_REVIEW', ?, ?, 'OPEN', 1.0, ?, ?)
+                """,
+                (
+                    product_id,
+                    payload,
+                    datetime.now(UTC).isoformat(timespec="seconds"),
+                    datetime.now(UTC).isoformat(timespec="seconds"),
+                ),
+            )
 
     def _migrate_price_history_columns(self, connection: sqlite3.Connection) -> None:
         existing = {row["name"] for row in connection.execute("PRAGMA table_info(price_history)")}

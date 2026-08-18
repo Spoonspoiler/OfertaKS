@@ -29,6 +29,16 @@ from ofertaks.models.knowledge import (
     ValidationAnswer,
     ValidationTask,
 )
+from ofertaks.normalization.gtin import (
+    FRESH_BULK_ARTISANAL,
+    GTIN_CONFLICT,
+    GTIN_NOT_APPLICABLE,
+    PROVISIONAL_NO_GTIN,
+    VERIFIED_GTIN,
+    gtin_type,
+    identity_strategy_for,
+    validate_gtin,
+)
 from ofertaks.models.offer import Offer
 from ofertaks.models.pricing import PRICE_CONTEXTS, PROMOTION, REGULAR, PriceObservation, PromotionEvent
 from ofertaks.models.recipe import Recipe, RecipeIngredient
@@ -206,14 +216,17 @@ class Repository:
         quantity = offer.quantity if offer.quantity is not None else canonical.quantity
         unit = offer.unit or canonical.unit
         category = offer.category or canonical.category
+        identity_strategy = identity_strategy_for(category)
+        gtin_status = GTIN_NOT_APPLICABLE if identity_strategy == FRESH_BULK_ARTISANAL else PROVISIONAL_NO_GTIN
         brand_id = self._ensure_organization(db, "brands", brand) if brand else None
         now = self._now()
         db.execute(
             """
             INSERT OR IGNORE INTO products (
-                canonical_name, brand, brand_id, quantity, unit, category, created_at, updated_at
+                canonical_name, brand, brand_id, quantity, unit, category, gtin_status,
+                identity_strategy, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 canonical_name,
@@ -222,6 +235,8 @@ class Repository:
                 quantity,
                 unit,
                 category,
+                gtin_status,
+                identity_strategy,
                 now,
                 now,
             ),
@@ -561,6 +576,8 @@ class Repository:
     def list_offers(
         self,
         store_id: str | None = None,
+        merchant_id: str | None = None,
+        chain_id: str | None = None,
         category: str | None = None,
         sort: str = "best",
         limit: int | None = 200,
@@ -571,6 +588,12 @@ class Repository:
         if store_id:
             where.append("o.store_id = ?")
             params.append(store_id)
+        if merchant_id:
+            where.append("o.merchant_id = ?")
+            params.append(merchant_id)
+        elif chain_id:
+            where.append("o.chain_id = ?")
+            params.append(chain_id)
         if category:
             values = category_filter_values(category)
             where.append(f"o.category IN ({','.join('?' for _ in values)})")
@@ -648,6 +671,49 @@ class Repository:
             ).fetchone()
             return int(row["id"]) if row else None
 
+    def find_verified_product_by_gtin(self, barcode_gtin: str) -> dict[str, Any] | None:
+        """Resolve only an exact, validated, active packaged product."""
+
+        code = validate_gtin(barcode_gtin)
+        with self.database.connect() as db:
+            row = db.execute(
+                """
+                SELECT * FROM products
+                WHERE barcode_gtin = ? AND gtin_status = ? AND active = 1
+                LIMIT 1
+                """,
+                (code, VERIFIED_GTIN),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def resolve_product_identity(
+        self,
+        *,
+        barcode_gtin: str | None = None,
+        raw_name: str | None = None,
+        normalized_name: str | None = None,
+        store_id: str | None = None,
+    ) -> int | None:
+        """Use GTIN first; aliases are only a fallback when no code was captured."""
+
+        if barcode_gtin:
+            product = self.find_verified_product_by_gtin(barcode_gtin)
+            return int(product["id"]) if product else None
+        if not raw_name or not normalized_name:
+            return None
+        with self.database.connect() as db:
+            row = db.execute(
+                """
+                SELECT product_id FROM product_aliases
+                WHERE raw_name = ? AND normalized_name = ?
+                  AND (store_id = ? OR store_id IS NULL)
+                ORDER BY CASE WHEN store_id = ? THEN 0 ELSE 1 END, id
+                LIMIT 1
+                """,
+                (raw_name, normalized_name, store_id, store_id),
+            ).fetchone()
+            return int(row["product_id"]) if row else None
+
     def product_category(self, product_id: int) -> str | None:
         with self.database.connect() as db:
             row = db.execute("SELECT category FROM products WHERE id = ?", (product_id,)).fetchone()
@@ -658,13 +724,16 @@ class Repository:
 
         canonical = normalize_product_name(raw_name)
         canonical_name = canonical.normalized_name or raw_name.casefold().strip()
+        identity_strategy = identity_strategy_for(canonical.category)
+        gtin_status = GTIN_NOT_APPLICABLE if identity_strategy == FRESH_BULK_ARTISANAL else PROVISIONAL_NO_GTIN
         with self.database.connect() as db:
             db.execute(
                 """
                 INSERT OR IGNORE INTO products (
-                    canonical_name, brand, brand_id, quantity, unit, category, created_at, updated_at
+                    canonical_name, brand, brand_id, quantity, unit, category, gtin_status,
+                    identity_strategy, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     canonical_name,
@@ -673,6 +742,8 @@ class Repository:
                     canonical.quantity,
                     canonical.unit,
                     canonical.category,
+                    gtin_status,
+                    identity_strategy,
                     self._now(),
                     self._now(),
                 ),
@@ -777,16 +848,45 @@ class Repository:
 
         if not product.canonical_name.strip():
             raise ValueError("Canonical product name is required")
+        barcode_gtin = validate_gtin(product.barcode_gtin) if product.barcode_gtin else None
+        identity_strategy = (
+            product.identity_strategy
+            if product.identity_strategy == FRESH_BULK_ARTISANAL
+            else identity_strategy_for(product.category, barcode_gtin)
+        )
+        gtin_status = VERIFIED_GTIN if barcode_gtin else (
+            GTIN_NOT_APPLICABLE if identity_strategy == FRESH_BULK_ARTISANAL else PROVISIONAL_NO_GTIN
+        )
         with self.database.connect() as db:
             brand_id = product.brand_id
             if brand_id is None and product.brand:
                 brand_id = self._ensure_organization(db, "brands", product.brand)
-            if product.barcode_gtin:
+            if barcode_gtin:
                 existing = db.execute(
-                    "SELECT id FROM products WHERE barcode_gtin = ?", (product.barcode_gtin,)
+                    """
+                    SELECT id FROM products
+                    WHERE barcode_gtin = ? AND gtin_status = ? AND active = 1
+                    """,
+                    (barcode_gtin, VERIFIED_GTIN),
                 ).fetchone()
                 if existing:
                     return int(existing["id"])
+                provisional = db.execute(
+                    """
+                    SELECT id, barcode_gtin, gtin_status FROM products
+                    WHERE canonical_name = ?
+                      AND COALESCE(brand, '') = COALESCE(?, '')
+                      AND COALESCE(quantity, -1) = COALESCE(?, -1)
+                      AND COALESCE(unit, '') = COALESCE(?, '')
+                      AND barcode_gtin IS NULL
+                    ORDER BY id
+                    LIMIT 1
+                    """,
+                    (product.canonical_name.strip(), product.brand, product.quantity, product.unit),
+                ).fetchone()
+                if provisional and provisional["gtin_status"] != GTIN_CONFLICT:
+                    self._assign_gtin_in_db(db, int(provisional["id"]), barcode_gtin, product.gtin_source or "MANUAL")
+                    return int(provisional["id"])
             now = self._now()
             db.execute(
                 """
@@ -794,10 +894,11 @@ class Repository:
                     canonical_name, brand, brand_id, manufacturer_id, producer_id, distributor_id,
                     product_family, variant, quantity, unit, packaging, flavor, fat_percentage,
                     processing_type, category, origin_country, origin_region, barcode_gtin,
+                    gtin_type, gtin_status, gtin_verified_at, gtin_source, identity_strategy,
                     official_product_url, official_image_url, active, merged_into_product_id,
                     created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     product.canonical_name.strip(),
@@ -817,7 +918,12 @@ class Repository:
                     product.category,
                     product.origin_country,
                     product.origin_region,
-                    product.barcode_gtin,
+                    barcode_gtin,
+                    gtin_type(barcode_gtin),
+                    gtin_status,
+                    self._timestamp(product.gtin_verified_at) if barcode_gtin else None,
+                    product.gtin_source or ("MANUAL" if barcode_gtin else None),
+                    identity_strategy,
                     product.official_product_url,
                     product.official_image_url,
                     int(product.active),
@@ -826,17 +932,99 @@ class Repository:
                     now,
                 ),
             )
-            row = db.execute(
+            if barcode_gtin:
+                row = db.execute(
+                    """
+                    SELECT id FROM products
+                    WHERE barcode_gtin = ? AND gtin_status = ? AND active = 1
+                    """,
+                    (barcode_gtin, VERIFIED_GTIN),
+                ).fetchone()
+            else:
+                row = db.execute(
+                    """
+                    SELECT id FROM products
+                    WHERE canonical_name = ?
+                      AND COALESCE(brand, '') = COALESCE(?, '')
+                      AND COALESCE(quantity, -1) = COALESCE(?, -1)
+                      AND COALESCE(unit, '') = COALESCE(?, '')
+                      AND barcode_gtin IS NULL
+                    """,
+                    (product.canonical_name.strip(), product.brand, product.quantity, product.unit),
+                ).fetchone()
+            product_id = int(row["id"])
+            return product_id
+
+    def assign_gtin(self, product_id: int, barcode_gtin: str, source: str = "MANUAL") -> str:
+        """Attach a validated GTIN or leave a visible conflict for review."""
+
+        code = validate_gtin(barcode_gtin)
+        with self.database.connect() as db:
+            return self._assign_gtin_in_db(db, product_id, code, source)
+
+    def _assign_gtin_in_db(self, db, product_id: int, code: str, source: str) -> str:
+        product = db.execute("SELECT id, barcode_gtin FROM products WHERE id = ?", (product_id,)).fetchone()
+        if product is None:
+            raise ValueError("Canonical product does not exist")
+        existing = db.execute(
+            """
+            SELECT id FROM products
+            WHERE barcode_gtin = ? AND gtin_status = ? AND active = 1
+            LIMIT 1
+            """,
+            (code, VERIFIED_GTIN),
+        ).fetchone()
+        if existing and int(existing["id"]) != product_id:
+            db.execute(
+                "UPDATE products SET gtin_status = ?, updated_at = ? WHERE id = ?",
+                (GTIN_CONFLICT, self._now(), product_id),
+            )
+            self._create_gtin_validation_task(db, product_id, code, "already_assigned")
+            return GTIN_CONFLICT
+        if product["barcode_gtin"] and product["barcode_gtin"] != code:
+            self._create_gtin_validation_task(db, product_id, code, "different_existing_code")
+            return GTIN_CONFLICT
+        db.execute(
+            """
+            UPDATE products
+            SET barcode_gtin = ?, gtin_type = ?, gtin_status = ?, gtin_verified_at = ?,
+                gtin_source = ?, identity_strategy = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                code,
+                gtin_type(code),
+                VERIFIED_GTIN,
+                self._now(),
+                source,
+                identity_strategy_for(None, code),
+                self._now(),
+                product_id,
+            ),
+        )
+        return VERIFIED_GTIN
+
+    def _create_gtin_validation_task(self, db, product_id: int, code: str, reason: str) -> None:
+        payload = json.dumps({"gtin": code, "reason": reason}, sort_keys=True)
+        existing = db.execute(
+            """
+            SELECT id FROM validation_tasks
+            WHERE task_type = 'GTIN_REVIEW' AND candidate_product_id = ? AND payload_json = ?
+              AND status = 'OPEN'
+            LIMIT 1
+            """,
+            (product_id, payload),
+        ).fetchone()
+        if existing is None:
+            now = self._now()
+            db.execute(
                 """
-                SELECT id FROM products
-                WHERE canonical_name = ?
-                  AND COALESCE(brand, '') = COALESCE(?, '')
-                  AND COALESCE(quantity, -1) = COALESCE(?, -1)
-                  AND COALESCE(unit, '') = COALESCE(?, '')
+                INSERT INTO validation_tasks (
+                    task_type, candidate_product_id, payload_json, status, usefulness_score, created_at, updated_at
+                ) VALUES ('GTIN_REVIEW', ?, ?, 'OPEN', 1.0, ?, ?)
                 """,
-                (product.canonical_name.strip(), product.brand, product.quantity, product.unit),
-            ).fetchone()
-            return int(row["id"])
+                (product_id, payload, now, now),
+            )
 
     def ensure_organization(self, kind: str, name: str) -> int:
         table_by_kind = {
@@ -933,6 +1121,7 @@ class Repository:
             existing = db.execute("SELECT * FROM products WHERE id = ?", (product_id,)).fetchone()
             if not existing:
                 raise ValueError("Canonical product does not exist")
+            barcode_gtin = updates.pop("barcode_gtin", None)
             changed = [key for key, value in updates.items() if existing[key] in {None, ""} and value not in {None, ""}]
             if changed:
                 assignments = ", ".join(f"{key} = ?" for key in changed)
@@ -940,6 +1129,10 @@ class Repository:
                     f"UPDATE products SET {assignments}, updated_at = ? WHERE id = ?",
                     [updates[key] for key in changed] + [self._now(), product_id],
                 )
+            if barcode_gtin not in {None, ""} and existing["barcode_gtin"] in {None, ""}:
+                status = self._assign_gtin_in_db(db, product_id, validate_gtin(str(barcode_gtin)), "METADATA")
+                if status == VERIFIED_GTIN:
+                    changed.append("barcode_gtin")
             return changed
 
     def add_product_alias(self, alias: ProductAlias) -> int:
@@ -1644,18 +1837,19 @@ class Repository:
             db.execute(
                 """
                 INSERT INTO merchants (
-                    id, name, merchant_type, chain_id, latitude, longitude,
+                    id, name, merchant_type, chain_id, ownership_type, latitude, longitude,
                     address, city, neighborhood, phone, website, opening_hours_json,
                     payment_cash, payment_card, community_added, claimed_by_merchant,
                     verification_status, source_type, source_id, osm_type, osm_id,
                     osm_tags_json, source_last_seen_at, merchant_last_verified_at,
                     description, photo_path, community_status, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     name=excluded.name,
                     merchant_type=excluded.merchant_type,
                     chain_id=excluded.chain_id,
+                    ownership_type=excluded.ownership_type,
                     latitude=excluded.latitude,
                     longitude=excluded.longitude,
                     address=excluded.address,
@@ -1686,6 +1880,7 @@ class Repository:
                     merchant.name,
                     merchant.merchant_type,
                     merchant.chain_id,
+                    merchant.ownership_type,
                     merchant.latitude,
                     merchant.longitude,
                     merchant.address,

@@ -54,6 +54,19 @@ MERCHANT_VERIFIED = "MERCHANT_VERIFIED"
 ADMIN_VERIFIED = "ADMIN_VERIFIED"
 CLOSED_REPORTED = "CLOSED_REPORTED"
 
+INDEPENDENT_LOCAL = "INDEPENDENT_LOCAL"
+LOCAL_CHAIN = "LOCAL_CHAIN"
+NATIONAL_CHAIN = "NATIONAL_CHAIN"
+INTERNATIONAL_CHAIN = "INTERNATIONAL_CHAIN"
+OWNERSHIP_UNKNOWN = "UNKNOWN"
+OWNERSHIP_TYPES = {
+    INDEPENDENT_LOCAL,
+    LOCAL_CHAIN,
+    NATIONAL_CHAIN,
+    INTERNATIONAL_CHAIN,
+    OWNERSHIP_UNKNOWN,
+}
+
 
 @dataclass(slots=True)
 class Chain:
@@ -73,6 +86,7 @@ class Merchant:
     chain_id: str | None
     latitude: float
     longitude: float
+    ownership_type: str = OWNERSHIP_UNKNOWN
     address: str | None = None
     city: str | None = None
     neighborhood: str | None = None
@@ -100,3 +114,5 @@ class Merchant:
     def __post_init__(self) -> None:
         if self.merchant_type not in MERCHANT_TYPES:
             raise ValueError(f"Unknown merchant type: {self.merchant_type}")
+        if self.ownership_type not in OWNERSHIP_TYPES:
+            raise ValueError(f"Unknown merchant ownership type: {self.ownership_type}")

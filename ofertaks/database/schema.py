@@ -1,6 +1,6 @@
 """SQLite schema for OfertaKS."""
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA_SQL = """
 PRAGMA foreign_keys = ON;
@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS merchants (
     name TEXT NOT NULL,
     merchant_type TEXT NOT NULL,
     chain_id TEXT REFERENCES chains(id),
+    ownership_type TEXT NOT NULL DEFAULT 'UNKNOWN',
     latitude REAL NOT NULL,
     longitude REAL NOT NULL,
     address TEXT,
@@ -110,6 +111,11 @@ CREATE TABLE IF NOT EXISTS products (
     origin_country TEXT,
     origin_region TEXT,
     barcode_gtin TEXT,
+    gtin_type TEXT NOT NULL DEFAULT 'UNKNOWN',
+    gtin_status TEXT NOT NULL DEFAULT 'PROVISIONAL_NO_GTIN',
+    gtin_verified_at TEXT,
+    gtin_source TEXT,
+    identity_strategy TEXT NOT NULL DEFAULT 'PACKAGED',
     official_product_url TEXT,
     official_image_url TEXT,
     active INTEGER NOT NULL DEFAULT 1,
@@ -518,14 +524,6 @@ CREATE INDEX IF NOT EXISTS idx_quality_product_merchant
 ON quality_observations(product_id, merchant_id, observed_at);
 CREATE INDEX IF NOT EXISTS idx_origin_product
 ON origin_observations(product_id, observed_at);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_products_unique
-ON products (
-    canonical_name,
-    COALESCE(brand, ''),
-    COALESCE(quantity, -1),
-    COALESCE(unit, '')
-);
-
 CREATE TRIGGER IF NOT EXISTS raw_observations_preserve_evidence
 BEFORE UPDATE OF merchant_id, chain_id, store_id, raw_name, raw_description,
                  raw_price_text, parsed_price, raw_quantity_text, source_type,
@@ -545,6 +543,7 @@ OFFER_MIGRATION_COLUMNS = {
 }
 
 MERCHANT_MIGRATION_COLUMNS = {
+    "ownership_type": "TEXT NOT NULL DEFAULT 'UNKNOWN'",
     "source_type": "TEXT NOT NULL DEFAULT 'UNKNOWN'",
     "source_id": "TEXT",
     "osm_type": "TEXT",
@@ -571,6 +570,11 @@ PRODUCT_MIGRATION_COLUMNS = {
     "origin_country": "TEXT",
     "origin_region": "TEXT",
     "barcode_gtin": "TEXT",
+    "gtin_type": "TEXT NOT NULL DEFAULT 'UNKNOWN'",
+    "gtin_status": "TEXT NOT NULL DEFAULT 'PROVISIONAL_NO_GTIN'",
+    "gtin_verified_at": "TEXT",
+    "gtin_source": "TEXT",
+    "identity_strategy": "TEXT NOT NULL DEFAULT 'PACKAGED'",
     "official_product_url": "TEXT",
     "official_image_url": "TEXT",
     "active": "INTEGER NOT NULL DEFAULT 1",
@@ -612,6 +616,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_promotion_events_dedupe
 ON promotion_events(dedupe_key) WHERE dedupe_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_aliases_merchant_lookup ON product_aliases(merchant_id, normalized_name);
 CREATE INDEX IF NOT EXISTS idx_aliases_chain_lookup ON product_aliases(chain_id, normalized_name);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_products_gtin
-ON products(barcode_gtin) WHERE barcode_gtin IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_products_provisional_identity
+ON products (
+    canonical_name,
+    COALESCE(brand, ''),
+    COALESCE(quantity, -1),
+    COALESCE(unit, '')
+)
+WHERE barcode_gtin IS NULL AND active = 1;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_products_verified_gtin
+ON products(barcode_gtin)
+WHERE barcode_gtin IS NOT NULL AND gtin_status = 'VERIFIED_GTIN' AND active = 1;
 """

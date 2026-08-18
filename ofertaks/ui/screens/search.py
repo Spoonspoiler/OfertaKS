@@ -29,6 +29,9 @@ class SearchScreen(Screen, OfferCardMixin):
         layout.add_widget(self.title_label)
         row, self.input_box, self.search_button = build_search_bar(self.set_query)
         layout.add_widget(row)
+        self.scan_button = Button(text=t("scan_product"), size_hint_y=None, height=dp(38))
+        self.scan_button.bind(on_release=lambda *_: self.app.show_barcode_scan(return_screen="search"))
+        layout.add_widget(self.scan_button)
         self.show_map_button = Button(
             text=t("show_on_map"), size_hint_y=None, height=dp(38), disabled=True
         )
@@ -46,6 +49,7 @@ class SearchScreen(Screen, OfferCardMixin):
         self.title_label.text = t("search")
         self.input_box.hint_text = t("search")
         self.search_button.text = t("search")
+        self.scan_button.text = t("scan_product")
         self.show_map_button.text = t("show_on_map")
 
     def set_query(self, query: str) -> None:

@@ -79,6 +79,16 @@ class CanonicalKnowledgeTests(TestCase):
 
         self.assertEqual(classify_product_relationship(tomatoes, same_tomatoes).relationship, EXACT_PRODUCT)
 
+    def test_distinct_gtins_never_auto_match_as_exact(self):
+        first = product("Barilla Spaghetti N5 500 g")
+        second = product("Barilla Spaghetti N5 500 g")
+        first.barcode_gtin = "4006381333931"
+        second.barcode_gtin = "5901234123457"
+
+        relation = classify_product_relationship(first, second)
+
+        self.assertEqual(relation.relationship, SAME_PRODUCT_FAMILY)
+
     def test_raw_evidence_is_immutable_but_its_match_can_be_confirmed(self):
         product_id = self.repo.create_canonical_product(product("Rio Mare Tuna 160 g", brand="Rio Mare", family="tuna", variant="oil", quantity=160, category="MEAT"))
         raw_id = self.repo.record_raw_observation(

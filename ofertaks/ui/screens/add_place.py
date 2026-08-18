@@ -18,6 +18,11 @@ from ofertaks.models.merchant import (
     SPECIALTY_FOOD,
     STREET_VENDOR,
     SUPERMARKET,
+    INDEPENDENT_LOCAL,
+    LOCAL_CHAIN,
+    NATIONAL_CHAIN,
+    INTERNATIONAL_CHAIN,
+    OWNERSHIP_UNKNOWN,
 )
 from ofertaks.ui.theme import MUTED, bind_scroll_content_width, make_label, make_screen_layout
 
@@ -58,6 +63,7 @@ class AddPlaceScreen(Screen):
         self.app = app
         self.location = (42.6597, 21.1566)
         self.type_labels: dict[str, str] = {}
+        self.ownership_labels: dict[str, str] = {}
         self._labels: dict[str, object] = {}
         frame, layout = make_screen_layout()
         self.back_button = Button(text=t("back"), size_hint_y=None, height=dp(40))
@@ -75,6 +81,9 @@ class AddPlaceScreen(Screen):
         self._label(form, "merchant_type")
         self.type_spinner = Spinner(size_hint_y=None, height=dp(42))
         form.add_widget(self.type_spinner)
+        self._label(form, "ownership_type")
+        self.ownership_spinner = Spinner(size_hint_y=None, height=dp(42))
+        form.add_widget(self.ownership_spinner)
         self.latitude_input = self._field(form, "latitude", TextInput)
         self.longitude_input = self._field(form, "longitude", TextInput)
         self.description_input = self._field(form, "description", TextInput, multiline=True)
@@ -119,6 +128,16 @@ class AddPlaceScreen(Screen):
         self.type_spinner.values = tuple(self.type_labels)
         if self.type_spinner.text not in self.type_labels:
             self.type_spinner.text = t("map_type_fruit_vegetable")
+        self.ownership_labels = {
+            t("ownership_unknown"): OWNERSHIP_UNKNOWN,
+            t("ownership_independent_local"): INDEPENDENT_LOCAL,
+            t("ownership_local_chain"): LOCAL_CHAIN,
+            t("ownership_national_chain"): NATIONAL_CHAIN,
+            t("ownership_international_chain"): INTERNATIONAL_CHAIN,
+        }
+        self.ownership_spinner.values = tuple(self.ownership_labels)
+        if self.ownership_spinner.text not in self.ownership_labels:
+            self.ownership_spinner.text = t("ownership_unknown")
 
     def _save(self) -> None:
         try:
@@ -128,6 +147,7 @@ class AddPlaceScreen(Screen):
             self.status.text = t("location_required")
             return
         merchant_type = self.type_labels.get(self.type_spinner.text, FRUIT_VEGETABLE)
+        ownership_type = self.ownership_labels.get(self.ownership_spinner.text, OWNERSHIP_UNKNOWN)
         merchant_id = MapService(self.app.repository).add_community_merchant(
             name=self.name_input.text.strip() or t("unnamed_community_place"),
             merchant_type=merchant_type,
@@ -136,5 +156,6 @@ class AddPlaceScreen(Screen):
             description=self.description_input.text.strip() or None,
             opening_hours=self.hours_input.text.strip() or None,
             photo_path=self.photo_input.text.strip() or None,
+            ownership_type=ownership_type,
         )
         self.app.show_map(merchant_id=merchant_id)

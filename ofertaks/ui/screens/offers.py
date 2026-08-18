@@ -35,6 +35,9 @@ class OffersScreen(Screen, OfferCardMixin):
         super().__init__(**kwargs)
         self.app = app
         self.selected_store_id: str | None = None
+        self.selected_merchant_id: str | None = None
+        self.selected_chain_id: str | None = None
+        self.selected_merchant_name: str | None = None
         self.selected_category: str | None = None
         self.selected_sort = "best"
         frame, layout = make_screen_layout()
@@ -128,6 +131,25 @@ class OffersScreen(Screen, OfferCardMixin):
 
     def _store_changed(self, _spinner, text: str) -> None:
         self.selected_store_id = self.store_labels.get(text)
+        self.selected_merchant_id = None
+        self.selected_chain_id = None
+        self.selected_merchant_name = None
+        self.reload()
+
+    def show_merchant(self, merchant: dict) -> None:
+        """Show only facts attributed to the selected map merchant."""
+
+        self.selected_store_id = None
+        self.selected_merchant_id = merchant["id"]
+        self.selected_chain_id = None
+        has_direct_offers = bool(self.app.repository.list_offers(merchant_id=merchant["id"], limit=1))
+        if merchant.get("chain_id") and not has_direct_offers:
+            self.selected_merchant_id = None
+            self.selected_chain_id = merchant["chain_id"]
+            self.selected_merchant_name = f"{merchant['name']} ({t('chain_offers')})"
+        else:
+            self.selected_merchant_name = merchant["name"]
+        self.store_spinner.text = t("all")
         self.reload()
 
     def _sort_changed(self, _spinner, text: str) -> None:
@@ -146,9 +168,16 @@ class OffersScreen(Screen, OfferCardMixin):
         self._offer_context_cache = {}
         offers = self.app.repository.list_offers(
             store_id=self.selected_store_id,
+            merchant_id=self.selected_merchant_id,
+            chain_id=self.selected_chain_id,
             category=self.selected_category,
             sort=self.selected_sort,
             limit=250,
+        )
+        self.title_label.text = (
+            f"{t('offers')}: {self.selected_merchant_name}"
+            if self.selected_merchant_name
+            else t("offers")
         )
         self.offer_list.clear_widgets()
         if not offers:

@@ -45,6 +45,9 @@ class PriceUpdateScreen(Screen):
             text=t("update_price"), size_hint_y=None, height=dp(34), bold=True, font_size="22sp"
         )
         layout.add_widget(self.title_label)
+        self.scan_button = Button(text=t("scan_product"), size_hint_y=None, height=dp(40))
+        self.scan_button.bind(on_release=lambda *_: self._open_barcode_scan())
+        layout.add_widget(self.scan_button)
 
         scroll = ScrollView()
         form = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(7), padding=(0, 0, 0, dp(8)))
@@ -104,6 +107,7 @@ class PriceUpdateScreen(Screen):
         self.back_button.text = t("back")
         self.title_label.text = t("add_product") if self.mode == "add_product" else t("update_price")
         self.save_button.text = t("save_price_update")
+        self.scan_button.text = t("scan_product")
         for key, label in self._field_labels.items():
             label.text = t(key)
         self.origin_source_labels = {
@@ -152,7 +156,7 @@ class PriceUpdateScreen(Screen):
     def set_context(
         self,
         *,
-        merchant: dict,
+        merchant: dict | None,
         product_id: int | None,
         product_name: str | None,
         mode: str,
@@ -166,7 +170,7 @@ class PriceUpdateScreen(Screen):
         self.return_screen = return_screen
         self.product_label.text = t("product")
         self.product_input.text = product_name or ""
-        self.merchant_input.text = merchant["name"]
+        self.merchant_input.text = merchant["name"] if merchant else ""
         self.price_input.text = ""
         self.quantity_input.text = ""
         self.unit_input.text = ""
@@ -280,3 +284,9 @@ class PriceUpdateScreen(Screen):
         )
         self.app.repository.record_user_price_observation(observation)
         self.status_label.text = t("price_update_saved")
+
+    def _open_barcode_scan(self) -> None:
+        self.app.show_barcode_scan(
+            merchant=self.context.get("merchant") if self.context else None,
+            return_screen="price_update",
+        )

@@ -29,6 +29,9 @@
 - Price Integrity Engine with append-only normalized price observations, unit-price evidence, independent promotion events, active-promotion deduplication, and source/context/scope metadata.
 - Exact-product historical statistics (30/90/365-day and all-time medians, averages, ranges, confidence, and stable references) plus deterministic price-change events.
 - Consumer-first deal assessments and merchant summaries for exceptional, good, normal, expensive, very expensive, weak-promotion, insufficient-history, price-increase, discount-mismatch, and package-shrink signals.
+- GTIN-first packaged-product identity with check-digit validation, typed GTIN-8/12/13/14 states, safe migration of legacy codes, conflict review tasks, and distinct fresh/bulk identity handling.
+- Manual barcode lookup and contribution flow with a platform-neutral future camera-scanner boundary.
+- Explicit merchant ownership classifications and a local-first recommendation service that selects only explicitly classified local merchants within a documented price tolerance.
 
 ### Changed
 
@@ -44,6 +47,9 @@
 - Prishtina's online basemap now prioritizes tiles nearest the viewport center, keeps unresolved tiles transparent, and retains its local cache for re-visits.
 - Price history services now include archived raw evidence and reversible merged identities without double-counting synchronized scraper observations.
 - Offer cards, product detail, and the Prishtina map now use historical price integrity instead of advertised discount alone. The map includes Best deals and Price warnings filters and only attributes a current price to a concrete merchant when direct merchant evidence exists.
+- Offer-card price verdict caching now includes the actual price and scrape timestamp, preventing two differently priced lines with the same name from borrowing one another's status.
+- Product history graphs now plot the observed price fluctuation and mark promotion observations in orange; regular observations remain green.
+- Prishtina map markers now show the known chain or merchant name. Selecting a place exposes an `Offers here` action; chain-wide scraper offers are labelled as chain scope rather than represented as branch-specific facts.
 
 ### Known Limits
 
@@ -51,3 +57,4 @@
 - Community server is documented but not implemented.
 - Map routing remains an interface only, and location permission is not requested until a reliable current-location feature exists.
 - Deal labels are conservative until enough exact-product observations exist; they do not validate promotion claims or chain-wide prices as branch-specific facts without evidence.
+- Camera barcode capture is an interface only until it is validated in a real Android build; barcode entry is available now.

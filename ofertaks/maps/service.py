@@ -26,16 +26,19 @@ from ofertaks.models.merchant import (
     STREET_VENDOR,
     SUPERMARKET,
     Merchant,
+    INDEPENDENT_LOCAL,
+    LOCAL_CHAIN,
 )
 from ofertaks.services.comparison_service import classify_price_status
 from ofertaks.services.history_service import HistoryService
 from ofertaks.services.merchant_deals import MerchantDealSummary, MerchantDealSummaryService
+from ofertaks.services.recommendations import ConsumerRecommendationService
 
 ALL_FOOD_FILTER = "all_food"
 MAP_FILTER_TYPES = {
     ALL_FOOD_FILTER: None,
     "supermarkets": (SUPERMARKET, CONVENIENCE),
-    "local_shops": (GROCERY, CONVENIENCE, DAIRY, FARM, SPECIALTY_FOOD, STREET_VENDOR),
+    "local_shops": None,
     "markets": (MARKET, MARKET_STALL),
     "fruit_vegetables": (FRUIT_VEGETABLE,),
     "bakeries": (BAKERY,),
@@ -80,6 +83,7 @@ class MapService:
     def __init__(self, repository: Repository):
         self.repository = repository
         self.deals = MerchantDealSummaryService(repository)
+        self.recommendations = ConsumerRecommendationService(repository)
 
     def viewport_merchants(
         self,
@@ -93,6 +97,12 @@ class MapService:
         merchants = self.repository.find_merchants_in_bbox(
             min_lat, min_lon, max_lat, max_lon, types, limit
         )
+        if filter_id == "local_shops":
+            merchants = [
+                merchant
+                for merchant in merchants
+                if merchant.get("ownership_type") in {INDEPENDENT_LOCAL, LOCAL_CHAIN}
+            ]
         evidence = self.repository.latest_product_evidence(product_id) if product_id else {}
         category = self.repository.product_category(product_id) if product_id else None
         history = HistoryService(self.repository).stats_for_product(product_id) if product_id else None
@@ -124,9 +134,13 @@ class MapService:
                 for result in results
                 if result.deal_summary and result.deal_summary.price_integrity_warning_count
             ]
+        recommended_ids = {
+            item.merchant_id for item in self.recommendations.recommend(product_id) if item.recommended
+        } if product_id else set()
         return sorted(
             results,
             key=lambda result: (
+                0 if result.merchant["id"] in recommended_ids else 1,
                 -(result.deal_summary.exceptional_deal_count if result.deal_summary else 0),
                 -(result.deal_summary.good_deal_count if result.deal_summary else 0),
                 result.merchant["name"],
@@ -143,6 +157,7 @@ class MapService:
         description: str | None = None,
         opening_hours: str | None = None,
         photo_path: str | None = None,
+        ownership_type: str = "UNKNOWN",
     ) -> str:
         if not name.strip():
             raise ValueError("A display name is required")
@@ -153,6 +168,7 @@ class MapService:
             chain_id=None,
             latitude=latitude,
             longitude=longitude,
+            ownership_type=ownership_type,
             city="Prishtina",
             opening_hours={"raw": opening_hours} if opening_hours else None,
             community_added=True,
@@ -197,9 +213,7 @@ class MapService:
             status_key, status_color = "price_integrity_good", "cheap"
         elif summary and summary.price_integrity_warning_count:
             status_key, status_color = "price_integrity_weak_promotion", "expensive"
-        marker_code = MARKER_CODES.get(merchant["merchant_type"], "FD")
-        if summary and summary.exceptional_deal_count:
-            marker_code = f"{marker_code} {summary.exceptional_deal_count}"
+        marker_code = self._marker_label(merchant)
         return MapMerchantResult(
             merchant=merchant,
             availability=availability,
@@ -209,3 +223,16 @@ class MapService:
             marker_code=marker_code,
             deal_summary=summary,
         )
+
+    def _marker_label(self, merchant: dict) -> str:
+        """Make known chain markers identifiable without inventing branch facts."""
+
+        chain_id = merchant.get("chain_id")
+        if chain_id:
+            chain = next((item for item in self.repository.chains() if item["id"] == chain_id), None)
+            if chain:
+                return chain["name"][:12]
+        name = (merchant.get("name") or "").strip()
+        if name:
+            return name[:12]
+        return MARKER_CODES.get(merchant["merchant_type"], "Food")

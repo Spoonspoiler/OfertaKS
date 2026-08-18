@@ -49,6 +49,7 @@ class MapScreen(Screen):
         from kivy.uix.boxlayout import BoxLayout
         from kivy.uix.button import Button
         from kivy.uix.floatlayout import FloatLayout
+        from kivy.uix.gridlayout import GridLayout
         from kivy.uix.scrollview import ScrollView
         from kivy.uix.togglebutton import ToggleButton
 
@@ -108,16 +109,24 @@ class MapScreen(Screen):
         self.card_meta = make_label(size_hint_y=None, height=dp(20), color=MUTED, shorten=True)
         self.card_deals = make_label(size_hint_y=None, height=dp(48), font_size="11sp", color=MUTED)
         self.card_observation = make_label(size_hint_y=None, height=dp(24), color=MUTED, shorten=True)
-        actions = BoxLayout(size_hint_y=None, height=dp(34), spacing=dp(5))
+        actions = GridLayout(cols=3, size_hint_y=None, height=dp(68), spacing=dp(5))
         self.update_button = Button(text=t("update_price"), font_size="11sp")
         self.update_button.bind(on_release=lambda *_: self._update_price())
+        self.offers_here_button = Button(text=t("offers_here"), font_size="11sp")
+        self.offers_here_button.bind(on_release=lambda *_: self._offers_here())
         self.add_product_button = Button(text=t("add_product"), font_size="11sp")
         self.add_product_button.bind(on_release=lambda *_: self._add_product())
         self.directions_button = Button(text=t("directions"), font_size="11sp")
         self.directions_button.bind(on_release=lambda *_: self._directions())
         self.closed_button = Button(text=t("place_closed"), font_size="11sp")
         self.closed_button.bind(on_release=lambda *_: self._report("CLOSED"))
-        for button in (self.update_button, self.add_product_button, self.directions_button, self.closed_button):
+        for button in (
+            self.offers_here_button,
+            self.update_button,
+            self.add_product_button,
+            self.directions_button,
+            self.closed_button,
+        ):
             actions.add_widget(button)
         self.card.add_widget(self.card_title)
         self.card.add_widget(self.card_meta)
@@ -144,6 +153,7 @@ class MapScreen(Screen):
         self.legend_button.text = t("legend")
         self.add_place_button.text = t("add_place")
         self.update_button.text = t("update_price")
+        self.offers_here_button.text = t("offers_here")
         self.add_product_button.text = t("add_product")
         self.directions_button.text = t("directions")
         self.closed_button.text = t("place_closed")
@@ -219,7 +229,7 @@ class MapScreen(Screen):
 
         merchant = result.merchant
         chain = next((row["name"] for row in self.app.repository.chains() if row["id"] == merchant.get("chain_id")), None)
-        self.card_title.text = merchant["name"]
+        self.card_title.text = merchant["name"] if not chain or chain.casefold() in merchant["name"].casefold() else f"{chain} - {merchant['name']}"
         source_key = {
             "OSM": "source_openstreetmap",
             "COMMUNITY": "community",
@@ -265,21 +275,12 @@ class MapScreen(Screen):
         else:
             detail = t("no_recent_product_information") if self.product_id else t("no_recent_observations")
         self.card_observation.text = detail
-        self.card.height = dp(184)
+        self.card.height = dp(218)
         self.card.opacity = 1
 
     def _render_context(self) -> None:
         if self._showing_legend:
-            self.context_label.text = " | ".join(
-                (
-                    f"SM {t('map_type_supermarket')}",
-                    f"FV {t('map_type_fruit_vegetable')}",
-                    f"MK {t('map_type_market')}",
-                    f"BK {t('map_type_bakery')}",
-                    f"BT {t('map_type_butcher')}",
-                    f"FS {t('map_type_fish')}",
-                )
-            )
+            self.context_label.text = t("map_marker_legend")
             return
         self.context_label.text = (
             f"{t('showing_on_map')}: {self.product_name}" if self.product_name else PRISHTINA_REGION.city
@@ -306,6 +307,10 @@ class MapScreen(Screen):
             return_screen="map",
         )
         self.app.show_screen("price_update")
+
+    def _offers_here(self) -> None:
+        if self.current_result:
+            self.app.show_merchant_offers(self.current_result.merchant)
 
     def _add_product(self) -> None:
         if not self.current_result:

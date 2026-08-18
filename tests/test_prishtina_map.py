@@ -102,6 +102,37 @@ class PrishtinaMapTests(TestCase):
         self.assertEqual(row["source_id"], "node/45")
         self.assertEqual(row["chain_id"], "viva_fresh")
         self.assertIn("VIVA FRESH", row["osm_tags_json"])
+        result_row = self.service.viewport_merchants((42.65, 21.15, 42.67, 21.17))[0]
+        self.assertEqual(result_row.marker_code, "Viva Fresh")
+
+    def test_chain_offer_filter_returns_chain_scope_without_branch_claim(self):
+        offer = Offer(
+            store_id="etc",
+            store_name="ETC",
+            raw_name="Apples",
+            normalized_name="apples",
+            brand=None,
+            quantity=1000,
+            unit="g",
+            normal_price=2.0,
+            offer_price=1.5,
+            unit_price=1.5,
+            discount_percent=25.0,
+            valid_from=None,
+            valid_until=None,
+            category=FRUIT_VEGETABLE,
+            source_url="https://example.test",
+            image_url=None,
+            scraped_at=datetime.now(UTC),
+            chain_id="etc",
+        )
+        self.repo.insert_offer(offer)
+
+        rows = self.repo.list_offers(chain_id="etc")
+
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(rows[0].merchant_id)
+        self.assertEqual(rows[0].chain_id, "etc")
 
     def test_existing_merchant_database_migrates_before_source_index_creation(self):
         legacy_path = Path(self.tmp.name) / "legacy.sqlite3"

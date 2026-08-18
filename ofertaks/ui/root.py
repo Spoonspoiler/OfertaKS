@@ -43,6 +43,7 @@ class OfertaKSApp(App if App is not None else object):
 
     def build(self):
         from ofertaks.ui.screens.basket import BasketScreen
+        from ofertaks.ui.screens.barcode_scan import BarcodeScanScreen
         from ofertaks.ui.screens.add_place import AddPlaceScreen
         from ofertaks.ui.screens.home import HomeScreen
         from ofertaks.ui.screens.map import MapScreen
@@ -67,6 +68,7 @@ class OfertaKSApp(App if App is not None else object):
             "product_detail": ProductDetailScreen(app=self, name="product_detail"),
             "price_update": PriceUpdateScreen(app=self, name="price_update"),
             "add_place": AddPlaceScreen(app=self, name="add_place"),
+            "barcode_scan": BarcodeScanScreen(app=self, name="barcode_scan"),
         }
         for screen in self.screens.values():
             self.screen_manager.add_widget(screen)
@@ -127,6 +129,16 @@ class OfertaKSApp(App if App is not None else object):
         detail = self.screens["product_detail"]
         detail.set_offer(offer)
         self.show_screen("product_detail")
+
+    def show_merchant_offers(self, merchant: dict) -> None:
+        offers = self.screens["offers"]
+        offers.show_merchant(merchant)
+        self.show_screen("offers")
+
+    def show_barcode_scan(self, *, merchant: dict | None = None, return_screen: str = "search", barcode: str = "") -> None:
+        scanner = self.screens["barcode_scan"]
+        scanner.set_context(merchant=merchant, return_screen=return_screen, barcode=barcode)
+        self.show_screen("barcode_scan")
 
     def show_map(
         self,

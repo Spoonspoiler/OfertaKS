@@ -1,0 +1,1 @@
+"""Barcode capture boundaries."""

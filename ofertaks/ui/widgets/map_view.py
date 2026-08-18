@@ -122,10 +122,11 @@ if FloatLayout is not None:
             self._marker_layer.clear_widgets()
             self._marker_buttons = []
             for result in self._markers[:80]:
+                marker_width = max(dp(42), min(dp(96), dp(20 + len(result.marker_code) * 7)))
                 button = Button(
                     text=result.marker_code,
                     size_hint=(None, None),
-                    size=(dp(38), dp(32)),
+                    size=(marker_width, dp(32)),
                     font_size="10sp",
                 )
                 add_fill_background(button, PRICE_STATUS_COLORS[result.price_status_color], radius=5)
@@ -248,7 +249,7 @@ if FloatLayout is not None:
                 y = self.center_y - (world_y - center_y)
                 visible = self.x - dp(24) <= x <= self.right + dp(24) and self.y - dp(24) <= y <= self.top + dp(24)
                 if visible:
-                    button.pos = (x - dp(19), y - dp(16))
+                    button.pos = (x - button.width / 2, y - dp(16))
                 button.opacity = 1 if visible else 0
                 button.disabled = not visible
 

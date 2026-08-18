@@ -28,8 +28,10 @@ from ofertaks.models.pricing import (
     PriceObservation,
     PromotionEvent,
 )
+from ofertaks.models.offer import Offer
 from ofertaks.services.merchant_deals import MerchantDealSummaryService
 from ofertaks.services.price_integrity import HistoricalPriceStatsService, PriceIntegrityService
+from ofertaks.ui.widgets.offer_card import OfferCardMixin
 
 
 class PriceIntegrityTests(TestCase):
@@ -50,7 +52,6 @@ class PriceIntegrityTests(TestCase):
                 id=None,
                 canonical_name=f"{name} {self._product_number}",
                 category="PANTRY",
-                barcode_gtin=f"990000000{self._product_number:03d}",
             )
         )
 
@@ -233,6 +234,33 @@ class PriceIntegrityTests(TestCase):
         self.assertEqual(integrity.assess(product_id, 1.05, observed_at=self.now).primary_status, NORMAL_PRICE)
         self.assertEqual(integrity.assess(product_id, 1.06, observed_at=self.now).primary_status, EXPENSIVE)
         self.assertEqual(integrity.assess(product_id, 1.16, observed_at=self.now).primary_status, VERY_EXPENSIVE)
+
+    def test_offer_card_cache_keeps_different_prices_separate(self):
+        product_id = self._product("Chicken")
+        self._regular_history(product_id, 5.0)
+        first = Offer(
+            store_id="etc", store_name="ETC", raw_name="Chicken", normalized_name="chicken",
+            brand=None, quantity=1000, unit="g", normal_price=None, offer_price=6.99,
+            unit_price=6.99, discount_percent=None, valid_from=None, valid_until=None,
+            category="MEAT", source_url="https://example.test/a", image_url=None, scraped_at=self.now,
+        )
+        second = Offer(
+            store_id="etc", store_name="ETC", raw_name="Chicken", normalized_name="chicken",
+            brand=None, quantity=1000, unit="g", normal_price=None, offer_price=3.99,
+            unit_price=3.99, discount_percent=None, valid_from=None, valid_until=None,
+            category="MEAT", source_url="https://example.test/b", image_url=None, scraped_at=self.now,
+        )
+        self.repository.insert_offer(first)
+        self.repository.insert_offer(second)
+        card = OfferCardMixin()
+        card.app = type("App", (), {"repository": self.repository})()
+
+        first_assessment = card._offer_context(first)[2]
+        second_assessment = card._offer_context(second)[2]
+
+        self.assertEqual(first_assessment.current_price, 6.99)
+        self.assertEqual(second_assessment.current_price, 3.99)
+        self.assertEqual(len(card._offer_context_cache), 2)
 
     def test_claim_mismatch_and_pre_promotion_increase_are_flags(self):
         product_id = self._product()

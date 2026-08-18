@@ -89,6 +89,16 @@ def classify_product_relationship(
     )
     comparable_category = bool(a.category and a.category == b.category)
 
+    # Two distinct verified codes identify two distinct purchasable products.
+    # They can still be comparable, but never silently become an exact match.
+    distinct_gtins = bool(a.barcode_gtin and b.barcode_gtin and a.barcode_gtin != b.barcode_gtin)
+    if distinct_gtins:
+        if same_brand and same_family:
+            return ProductRelation(SAME_PRODUCT_FAMILY, 0.82)
+        if comparable_category and a.family and b.family:
+            return ProductRelation(CATEGORY_EQUIVALENT, 0.56)
+        return ProductRelation(UNRELATED, 0.0)
+
     if same_brand and same_family and same_variant and same_quantity:
         return ProductRelation(EXACT_PRODUCT, 0.98)
     if same_brand and same_family and same_variant and a.quantity is not None and b.quantity is not None and not same_quantity:
