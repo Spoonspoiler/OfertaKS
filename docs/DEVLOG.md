@@ -30,3 +30,10 @@
 - Added SQLite bounding-box queries, source indexes, conservative duplicate confidence, local community place reports, and price-optional product observations for merchant cards and product map searches.
 - Product search and product detail can now open the Map with the product context. Current, stale, and unknown availability states are evidence-based and category freshness-aware.
 - Added local Add place and Add product map flows. Community places start `COMMUNITY_UNVERIFIED`; submissions are local and a future sync protocol is only a boundary, not a claimed backend.
+- Kept the Prishtina basemap online in accordance with OSM tile-server policy. Visible tiles are now requested from the center outward, unresolved images stay transparent instead of white, and the local cache serves re-visits where available.
+- HTTP handling now skips text/charset detection for binary image, PDF, ZIP, and octet-stream responses, preventing map PNGs from flooding the desktop terminal with encoding diagnostics.
+- Added schema version 5: canonical purchasable products, normalized brand/manufacturer/producer/distributor identities, contextual aliases, immutable raw observations, historical source documents, product source/evidence records, reversible merge records, and validation tables.
+- Historical archive discovery is adapter-driven and starts at 2025-01-01. It stores only supplied document metadata/evidence; OCR, bulk crawling, and invented historical prices remain out of scope.
+- Raw evidence can be linked after validation but its source text, price, quantity, dates, document, and URL are SQLite-protected from rewrite. Legacy offers are safely backfilled as marked legacy scraper evidence during migration.
+- Official metadata fills only missing canonical fields. Conflicting values are retained as conflicted evidence and create validation work instead of overwriting product data.
+- Added deterministic product relationship levels, configurable three-contributor consensus, reversible product merges, and promotion classification based on observed historical references rather than advertised discounts alone.

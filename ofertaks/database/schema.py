@@ -1,6 +1,6 @@
 """SQLite schema for OfertaKS."""
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA_SQL = """
 PRAGMA foreign_keys = ON;
@@ -54,22 +54,84 @@ CREATE TABLE IF NOT EXISTS merchants (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS brands (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    normalized_name TEXT NOT NULL UNIQUE,
+    website TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS manufacturers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    normalized_name TEXT NOT NULL UNIQUE,
+    website TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS producers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    normalized_name TEXT NOT NULL UNIQUE,
+    website TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS distributors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    normalized_name TEXT NOT NULL UNIQUE,
+    website TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS products (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     canonical_name TEXT NOT NULL,
     brand TEXT,
+    brand_id INTEGER REFERENCES brands(id),
+    manufacturer_id INTEGER REFERENCES manufacturers(id),
+    producer_id INTEGER REFERENCES producers(id),
+    distributor_id INTEGER REFERENCES distributors(id),
+    product_family TEXT,
+    variant TEXT,
     quantity REAL,
     unit TEXT,
-    category TEXT
+    packaging TEXT,
+    flavor TEXT,
+    fat_percentage REAL,
+    processing_type TEXT,
+    category TEXT,
+    origin_country TEXT,
+    origin_region TEXT,
+    barcode_gtin TEXT,
+    official_product_url TEXT,
+    official_image_url TEXT,
+    active INTEGER NOT NULL DEFAULT 1,
+    merged_into_product_id INTEGER REFERENCES products(id),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS product_aliases (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-    store_id TEXT NOT NULL REFERENCES stores(id),
+    store_id TEXT REFERENCES stores(id),
+    merchant_id TEXT REFERENCES merchants(id),
+    chain_id TEXT REFERENCES chains(id),
     raw_name TEXT NOT NULL,
     normalized_name TEXT NOT NULL,
-    UNIQUE(store_id, raw_name, normalized_name)
+    source_context TEXT,
+    matching_status TEXT NOT NULL DEFAULT 'UNVERIFIED',
+    matching_confidence REAL NOT NULL DEFAULT 0.0,
+    source_raw_observation_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(store_id, merchant_id, chain_id, raw_name, normalized_name)
 );
 
 CREATE TABLE IF NOT EXISTS offers (
@@ -102,7 +164,114 @@ CREATE TABLE IF NOT EXISTS price_history (
     store_id TEXT NOT NULL REFERENCES stores(id),
     price REAL NOT NULL,
     normal_price REAL,
-    observed_at TEXT NOT NULL
+    observed_at TEXT NOT NULL,
+    raw_observation_id INTEGER,
+    source_type TEXT,
+    confidence_state TEXT
+);
+
+CREATE TABLE IF NOT EXISTS historical_source_documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chain_id TEXT REFERENCES chains(id),
+    merchant_id TEXT REFERENCES merchants(id),
+    store_id TEXT REFERENCES stores(id),
+    source_type TEXT NOT NULL,
+    url TEXT NOT NULL,
+    canonical_url TEXT,
+    publication_date TEXT,
+    valid_from TEXT,
+    valid_until TEXT,
+    content_hash TEXT,
+    retrieved_at TEXT NOT NULL,
+    archived_at TEXT,
+    extraction_status TEXT NOT NULL DEFAULT 'PENDING',
+    raw_metadata_json TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS raw_observations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    merchant_id TEXT REFERENCES merchants(id),
+    chain_id TEXT REFERENCES chains(id),
+    store_id TEXT REFERENCES stores(id),
+    raw_name TEXT NOT NULL,
+    raw_description TEXT,
+    raw_price_text TEXT,
+    parsed_price REAL,
+    raw_quantity_text TEXT,
+    source_type TEXT NOT NULL,
+    source_url TEXT,
+    source_document_id INTEGER REFERENCES historical_source_documents(id),
+    valid_from TEXT,
+    valid_until TEXT,
+    observed_at TEXT,
+    image_reference TEXT,
+    canonical_product_id INTEGER REFERENCES products(id),
+    matching_status TEXT NOT NULL DEFAULT 'UNMATCHED',
+    matching_confidence REAL NOT NULL DEFAULT 0.0,
+    dedupe_key TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS product_sources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    source_type TEXT NOT NULL,
+    publisher TEXT NOT NULL,
+    url TEXT NOT NULL,
+    retrieved_at TEXT NOT NULL,
+    last_checked_at TEXT,
+    status TEXT NOT NULL DEFAULT 'ACTIVE',
+    confidence REAL NOT NULL DEFAULT 0.0,
+    raw_metadata_json TEXT,
+    UNIQUE(product_id, url)
+);
+
+CREATE TABLE IF NOT EXISTS product_attribute_evidence (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    field_name TEXT NOT NULL,
+    value_text TEXT NOT NULL,
+    source_id INTEGER REFERENCES product_sources(id),
+    source_type TEXT,
+    confidence REAL NOT NULL DEFAULT 0.0,
+    confidence_state TEXT NOT NULL DEFAULT 'UNVERIFIED',
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS product_merges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_product_id INTEGER NOT NULL REFERENCES products(id),
+    target_product_id INTEGER NOT NULL REFERENCES products(id),
+    reason TEXT,
+    created_by TEXT,
+    merged_at TEXT NOT NULL,
+    undone_at TEXT,
+    undone_by TEXT,
+    CHECK(source_product_id <> target_product_id)
+);
+
+CREATE TABLE IF NOT EXISTS validation_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_type TEXT NOT NULL,
+    raw_observation_id INTEGER REFERENCES raw_observations(id),
+    candidate_product_id INTEGER REFERENCES products(id),
+    payload_json TEXT,
+    status TEXT NOT NULL DEFAULT 'OPEN',
+    usefulness_score REAL NOT NULL DEFAULT 0.0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    resolved_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS validation_answers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    validation_task_id INTEGER NOT NULL REFERENCES validation_tasks(id) ON DELETE CASCADE,
+    contributor_id TEXT NOT NULL,
+    contributor_role TEXT NOT NULL DEFAULT 'CONTRIBUTOR',
+    answer TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(validation_task_id, contributor_id)
 );
 
 CREATE TABLE IF NOT EXISTS scrape_runs (
@@ -287,6 +456,18 @@ CREATE INDEX IF NOT EXISTS idx_offers_category ON offers(category);
 CREATE INDEX IF NOT EXISTS idx_price_history_product ON price_history(product_id, observed_at);
 CREATE INDEX IF NOT EXISTS idx_price_history_store ON price_history(store_id, observed_at);
 CREATE INDEX IF NOT EXISTS idx_aliases_lookup ON product_aliases(normalized_name);
+CREATE INDEX IF NOT EXISTS idx_raw_observations_product ON raw_observations(canonical_product_id, observed_at);
+CREATE INDEX IF NOT EXISTS idx_raw_observations_document ON raw_observations(source_document_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_raw_observations_dedupe
+ON raw_observations(dedupe_key) WHERE dedupe_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_historical_documents_lookup
+ON historical_source_documents(chain_id, publication_date, source_type);
+CREATE INDEX IF NOT EXISTS idx_product_sources_product ON product_sources(product_id, status);
+CREATE INDEX IF NOT EXISTS idx_product_attribute_evidence_product
+ON product_attribute_evidence(product_id, field_name, created_at);
+CREATE INDEX IF NOT EXISTS idx_product_merges_source ON product_merges(source_product_id, undone_at);
+CREATE INDEX IF NOT EXISTS idx_validation_tasks_priority ON validation_tasks(status, usefulness_score DESC);
+CREATE INDEX IF NOT EXISTS idx_validation_answers_task ON validation_answers(validation_task_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_scrape_runs_store ON scrape_runs(store_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_merchants_location ON merchants(latitude, longitude);
 CREATE INDEX IF NOT EXISTS idx_merchants_type ON merchants(merchant_type);
@@ -311,6 +492,16 @@ ON products (
     COALESCE(quantity, -1),
     COALESCE(unit, '')
 );
+
+CREATE TRIGGER IF NOT EXISTS raw_observations_preserve_evidence
+BEFORE UPDATE OF merchant_id, chain_id, store_id, raw_name, raw_description,
+                 raw_price_text, parsed_price, raw_quantity_text, source_type,
+                 source_url, source_document_id, valid_from, valid_until,
+                 observed_at, image_reference, dedupe_key, created_at
+ON raw_observations
+BEGIN
+    SELECT RAISE(ABORT, 'Raw observation evidence is immutable');
+END;
 """
 
 OFFER_MIGRATION_COLUMNS = {
@@ -333,8 +524,41 @@ MERCHANT_MIGRATION_COLUMNS = {
     "community_status": "TEXT NOT NULL DEFAULT 'NOT_COMMUNITY'",
 }
 
+PRODUCT_MIGRATION_COLUMNS = {
+    "brand_id": "INTEGER REFERENCES brands(id)",
+    "manufacturer_id": "INTEGER REFERENCES manufacturers(id)",
+    "producer_id": "INTEGER REFERENCES producers(id)",
+    "distributor_id": "INTEGER REFERENCES distributors(id)",
+    "product_family": "TEXT",
+    "variant": "TEXT",
+    "packaging": "TEXT",
+    "flavor": "TEXT",
+    "fat_percentage": "REAL",
+    "processing_type": "TEXT",
+    "origin_country": "TEXT",
+    "origin_region": "TEXT",
+    "barcode_gtin": "TEXT",
+    "official_product_url": "TEXT",
+    "official_image_url": "TEXT",
+    "active": "INTEGER NOT NULL DEFAULT 1",
+    "merged_into_product_id": "INTEGER REFERENCES products(id)",
+    "created_at": "TEXT",
+    "updated_at": "TEXT",
+}
+
+PRICE_HISTORY_MIGRATION_COLUMNS = {
+    "raw_observation_id": "INTEGER",
+    "source_type": "TEXT",
+    "confidence_state": "TEXT",
+}
+
 POST_MIGRATION_SQL = """
 CREATE INDEX IF NOT EXISTS idx_offers_merchant ON offers(merchant_id);
 CREATE INDEX IF NOT EXISTS idx_offers_chain ON offers(chain_id);
 CREATE INDEX IF NOT EXISTS idx_merchants_source ON merchants(source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_price_history_raw_observation ON price_history(raw_observation_id);
+CREATE INDEX IF NOT EXISTS idx_aliases_merchant_lookup ON product_aliases(merchant_id, normalized_name);
+CREATE INDEX IF NOT EXISTS idx_aliases_chain_lookup ON product_aliases(chain_id, normalized_name);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_products_gtin
+ON products(barcode_gtin) WHERE barcode_gtin IS NOT NULL;
 """

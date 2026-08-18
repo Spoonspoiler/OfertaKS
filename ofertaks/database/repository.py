@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from hashlib import sha256
 from datetime import UTC, datetime
 from typing import Any, Iterable
 
@@ -18,10 +19,21 @@ from ofertaks.models.community import (
     UserPriceObservation,
 )
 from ofertaks.models.merchant import Chain, Merchant
+from ofertaks.models.knowledge import (
+    CanonicalProduct,
+    HistoricalSourceDocument,
+    ProductAlias,
+    ProductAttributeEvidence,
+    ProductSource,
+    RawObservation,
+    ValidationAnswer,
+    ValidationTask,
+)
 from ofertaks.models.offer import Offer
 from ofertaks.models.recipe import Recipe, RecipeIngredient
 from ofertaks.normalization.product_normalizer import normalize_product_name
 from ofertaks.utils.categories import category_filter_values
+from ofertaks.utils.text import comparable_text
 
 
 class Repository:
@@ -153,21 +165,15 @@ class Repository:
                     """,
                     offer.to_record(),
                 )
-                db.execute(
-                    """
-                    INSERT OR IGNORE INTO product_aliases (
-                        product_id, store_id, raw_name, normalized_name
-                    )
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (product_id, offer.store_id, offer.raw_name, offer.normalized_name),
-                )
+                self._ensure_product_alias(db, product_id, offer.store_id, offer.raw_name, offer.normalized_name)
+                raw_observation_id = self._record_offer_evidence(db, offer, product_id)
                 db.execute(
                     """
                     INSERT INTO price_history (
-                        product_id, store_id, price, normal_price, observed_at
+                        product_id, store_id, price, normal_price, observed_at,
+                        raw_observation_id, source_type, confidence_state
                     )
-                    VALUES (?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         product_id,
@@ -175,6 +181,9 @@ class Repository:
                         offer.offer_price,
                         offer.normal_price,
                         offer.scraped_at.isoformat(timespec="seconds"),
+                        raw_observation_id,
+                        "SCRAPER_HTML",
+                        "MEDIUM",
                     ),
                 )
 
@@ -200,19 +209,15 @@ class Repository:
                 """,
                 offer.to_record(),
             )
+            self._ensure_product_alias(db, product_id, offer.store_id, offer.raw_name, offer.normalized_name)
+            raw_observation_id = self._record_offer_evidence(db, offer, product_id)
             db.execute(
                 """
-                INSERT OR IGNORE INTO product_aliases (
-                    product_id, store_id, raw_name, normalized_name
+                INSERT INTO price_history (
+                    product_id, store_id, price, normal_price, observed_at,
+                    raw_observation_id, source_type, confidence_state
                 )
-                VALUES (?, ?, ?, ?)
-                """,
-                (product_id, offer.store_id, offer.raw_name, offer.normalized_name),
-            )
-            db.execute(
-                """
-                INSERT INTO price_history (product_id, store_id, price, normal_price, observed_at)
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     product_id,
@@ -220,6 +225,9 @@ class Repository:
                     offer.offer_price,
                     offer.normal_price,
                     offer.scraped_at.isoformat(timespec="seconds"),
+                    raw_observation_id,
+                    "SCRAPER_HTML",
+                    "MEDIUM",
                 ),
             )
             return int(cursor.lastrowid)
@@ -227,17 +235,28 @@ class Repository:
     def _upsert_product(self, db, offer: Offer) -> int:
         canonical = normalize_product_name(offer.raw_name, offer.category)
         canonical_name = canonical.normalized_name or offer.normalized_name
+        brand = offer.brand or canonical.brand
+        quantity = offer.quantity if offer.quantity is not None else canonical.quantity
+        unit = offer.unit or canonical.unit
+        category = offer.category or canonical.category
+        brand_id = self._ensure_organization(db, "brands", brand) if brand else None
+        now = self._now()
         db.execute(
             """
-            INSERT OR IGNORE INTO products (canonical_name, brand, quantity, unit, category)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT OR IGNORE INTO products (
+                canonical_name, brand, brand_id, quantity, unit, category, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 canonical_name,
-                offer.brand or canonical.brand,
-                offer.quantity if offer.quantity is not None else canonical.quantity,
-                offer.unit or canonical.unit,
-                offer.category or canonical.category,
+                brand,
+                brand_id,
+                quantity,
+                unit,
+                category,
+                now,
+                now,
             ),
         )
         row = db.execute(
@@ -250,12 +269,172 @@ class Repository:
             """,
             (
                 canonical_name,
-                offer.brand or canonical.brand,
-                offer.quantity if offer.quantity is not None else canonical.quantity,
-                offer.unit or canonical.unit,
+                brand,
+                quantity,
+                unit,
             ),
         ).fetchone()
+        product_id = int(row["id"])
+        if brand_id is not None:
+            db.execute(
+                "UPDATE products SET brand_id = COALESCE(brand_id, ?), updated_at = ? WHERE id = ?",
+                (brand_id, now, product_id),
+            )
+        return product_id
+
+    def _ensure_organization(self, db, table: str, name: str) -> int:
+        if table not in {"brands", "manufacturers", "producers", "distributors"}:
+            raise ValueError(f"Unsupported organization table: {table}")
+        normalized_name = comparable_text(name)
+        if not normalized_name:
+            raise ValueError("Organization name is required")
+        now = self._now()
+        db.execute(
+            f"""
+            INSERT INTO {table} (name, normalized_name, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(normalized_name) DO UPDATE SET updated_at=excluded.updated_at
+            """,
+            (name.strip(), normalized_name, now, now),
+        )
+        row = db.execute(f"SELECT id FROM {table} WHERE normalized_name = ?", (normalized_name,)).fetchone()
         return int(row["id"])
+
+    def _ensure_product_alias(
+        self,
+        db,
+        product_id: int,
+        store_id: str | None,
+        raw_name: str,
+        normalized_name: str,
+        *,
+        merchant_id: str | None = None,
+        chain_id: str | None = None,
+        source_context: str = "SCRAPER",
+        matching_status: str = "AUTO_MATCHED",
+        matching_confidence: float = 0.75,
+        source_raw_observation_id: int | None = None,
+    ) -> int:
+        row = db.execute(
+            """
+            SELECT id FROM product_aliases
+            WHERE product_id = ? AND store_id IS ? AND merchant_id IS ? AND chain_id IS ?
+              AND raw_name = ? AND normalized_name = ?
+            """,
+            (product_id, store_id, merchant_id, chain_id, raw_name, normalized_name),
+        ).fetchone()
+        if row:
+            return int(row["id"])
+        cursor = db.execute(
+            """
+            INSERT INTO product_aliases (
+                product_id, store_id, merchant_id, chain_id, raw_name, normalized_name,
+                source_context, matching_status, matching_confidence, source_raw_observation_id, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                product_id,
+                store_id,
+                merchant_id,
+                chain_id,
+                raw_name,
+                normalized_name,
+                source_context,
+                matching_status,
+                matching_confidence,
+                source_raw_observation_id,
+                self._now(),
+            ),
+        )
+        return int(cursor.lastrowid)
+
+    def _record_offer_evidence(self, db, offer: Offer, product_id: int) -> int:
+        observed_at = offer.scraped_at.isoformat(timespec="seconds")
+        dedupe_payload = "|".join(
+            (
+                "offer",
+                offer.store_id,
+                offer.source_url,
+                offer.raw_name,
+                str(offer.offer_price),
+                observed_at,
+            )
+        )
+        observation = RawObservation(
+            id=None,
+            raw_name=offer.raw_name,
+            source_type="SCRAPER_HTML",
+            created_at=offer.scraped_at,
+            merchant_id=offer.merchant_id,
+            chain_id=offer.chain_id,
+            store_id=offer.store_id,
+            parsed_price=offer.offer_price,
+            source_url=offer.source_url,
+            valid_from=offer.valid_from,
+            valid_until=offer.valid_until,
+            observed_at=offer.scraped_at,
+            image_reference=offer.image_url,
+            canonical_product_id=product_id,
+            matching_status="AUTO_MATCHED",
+            matching_confidence=0.75,
+            dedupe_key=sha256(dedupe_payload.encode("utf-8")).hexdigest(),
+        )
+        return self._insert_raw_observation(db, observation)
+
+    def record_raw_observation(self, observation: RawObservation) -> int:
+        """Append source evidence without allowing later rewrites of raw fields."""
+
+        if not observation.raw_name.strip():
+            raise ValueError("Raw observation name is required")
+        if observation.parsed_price is not None and observation.parsed_price < 0:
+            raise ValueError("Parsed price cannot be negative")
+        with self.database.connect() as db:
+            return self._insert_raw_observation(db, observation)
+
+    def _insert_raw_observation(self, db, observation: RawObservation) -> int:
+        cursor = db.execute(
+            """
+            INSERT OR IGNORE INTO raw_observations (
+                merchant_id, chain_id, store_id, raw_name, raw_description, raw_price_text,
+                parsed_price, raw_quantity_text, source_type, source_url, source_document_id,
+                valid_from, valid_until, observed_at, image_reference, canonical_product_id,
+                matching_status, matching_confidence, dedupe_key, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                observation.merchant_id,
+                observation.chain_id,
+                observation.store_id,
+                observation.raw_name,
+                observation.raw_description,
+                observation.raw_price_text,
+                observation.parsed_price,
+                observation.raw_quantity_text,
+                observation.source_type.upper(),
+                observation.source_url,
+                observation.source_document_id,
+                observation.valid_from.isoformat() if observation.valid_from else None,
+                observation.valid_until.isoformat() if observation.valid_until else None,
+                self._timestamp(observation.observed_at),
+                observation.image_reference,
+                observation.canonical_product_id,
+                observation.matching_status.upper(),
+                max(0.0, min(1.0, observation.matching_confidence)),
+                observation.dedupe_key,
+                self._timestamp(observation.created_at) or self._now(),
+            ),
+        )
+        if cursor.rowcount:
+            return int(cursor.lastrowid)
+        if observation.dedupe_key:
+            row = db.execute(
+                "SELECT id FROM raw_observations WHERE dedupe_key = ?", (observation.dedupe_key,)
+            ).fetchone()
+            if row:
+                return int(row["id"])
+        raise RuntimeError("Raw observation could not be stored")
 
     def list_offers(
         self,
@@ -360,15 +539,20 @@ class Repository:
         with self.database.connect() as db:
             db.execute(
                 """
-                INSERT OR IGNORE INTO products (canonical_name, brand, quantity, unit, category)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT OR IGNORE INTO products (
+                    canonical_name, brand, brand_id, quantity, unit, category, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     canonical_name,
                     canonical.brand,
+                    self._ensure_organization(db, "brands", canonical.brand) if canonical.brand else None,
                     canonical.quantity,
                     canonical.unit,
                     canonical.category,
+                    self._now(),
+                    self._now(),
                 ),
             )
             row = db.execute(
@@ -423,6 +607,632 @@ class Repository:
         sql += " ORDER BY observed_at ASC"
         with self.database.connect() as db:
             return [dict(row) for row in db.execute(sql, params)]
+
+    def create_canonical_product(self, product: CanonicalProduct) -> int:
+        """Create or reuse a specific purchasable identity without guessing missing fields."""
+
+        if not product.canonical_name.strip():
+            raise ValueError("Canonical product name is required")
+        with self.database.connect() as db:
+            brand_id = product.brand_id
+            if brand_id is None and product.brand:
+                brand_id = self._ensure_organization(db, "brands", product.brand)
+            if product.barcode_gtin:
+                existing = db.execute(
+                    "SELECT id FROM products WHERE barcode_gtin = ?", (product.barcode_gtin,)
+                ).fetchone()
+                if existing:
+                    return int(existing["id"])
+            now = self._now()
+            db.execute(
+                """
+                INSERT OR IGNORE INTO products (
+                    canonical_name, brand, brand_id, manufacturer_id, producer_id, distributor_id,
+                    product_family, variant, quantity, unit, packaging, flavor, fat_percentage,
+                    processing_type, category, origin_country, origin_region, barcode_gtin,
+                    official_product_url, official_image_url, active, merged_into_product_id,
+                    created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    product.canonical_name.strip(),
+                    product.brand,
+                    brand_id,
+                    product.manufacturer_id,
+                    product.producer_id,
+                    product.distributor_id,
+                    product.product_family,
+                    product.variant,
+                    product.quantity,
+                    product.unit,
+                    product.packaging,
+                    product.flavor,
+                    product.fat_percentage,
+                    product.processing_type,
+                    product.category,
+                    product.origin_country,
+                    product.origin_region,
+                    product.barcode_gtin,
+                    product.official_product_url,
+                    product.official_image_url,
+                    int(product.active),
+                    product.merged_into_product_id,
+                    now,
+                    now,
+                ),
+            )
+            row = db.execute(
+                """
+                SELECT id FROM products
+                WHERE canonical_name = ?
+                  AND COALESCE(brand, '') = COALESCE(?, '')
+                  AND COALESCE(quantity, -1) = COALESCE(?, -1)
+                  AND COALESCE(unit, '') = COALESCE(?, '')
+                """,
+                (product.canonical_name.strip(), product.brand, product.quantity, product.unit),
+            ).fetchone()
+            return int(row["id"])
+
+    def ensure_organization(self, kind: str, name: str) -> int:
+        table_by_kind = {
+            "BRAND": "brands",
+            "MANUFACTURER": "manufacturers",
+            "PRODUCER": "producers",
+            "DISTRIBUTOR": "distributors",
+        }
+        table = table_by_kind.get(kind.upper())
+        if not table:
+            raise ValueError("Unsupported organization kind")
+        with self.database.connect() as db:
+            return self._ensure_organization(db, table, name)
+
+    def set_product_organization_if_empty(self, product_id: int, kind: str, name: str) -> bool:
+        column_by_kind = {
+            "BRAND": "brand_id",
+            "MANUFACTURER": "manufacturer_id",
+            "PRODUCER": "producer_id",
+            "DISTRIBUTOR": "distributor_id",
+        }
+        table_by_kind = {
+            "BRAND": "brands",
+            "MANUFACTURER": "manufacturers",
+            "PRODUCER": "producers",
+            "DISTRIBUTOR": "distributors",
+        }
+        normalized_kind = kind.upper()
+        column = column_by_kind.get(normalized_kind)
+        table = table_by_kind.get(normalized_kind)
+        if not column or not table:
+            raise ValueError("Unsupported organization kind")
+        with self.database.connect() as db:
+            existing = db.execute(f"SELECT {column} FROM products WHERE id = ?", (product_id,)).fetchone()
+            if not existing:
+                raise ValueError("Canonical product does not exist")
+            if existing[column] is not None:
+                return False
+            organization_id = self._ensure_organization(db, table, name)
+            assignments = f"{column} = ?, updated_at = ?"
+            params: list[Any] = [organization_id, self._now()]
+            if normalized_kind == "BRAND":
+                assignments = "brand = COALESCE(brand, ?), " + assignments
+                params.insert(0, name.strip())
+            params.append(product_id)
+            db.execute(f"UPDATE products SET {assignments} WHERE id = ?", params)
+            return True
+
+    def get_canonical_product(self, product_id: int) -> dict[str, Any] | None:
+        with self.database.connect() as db:
+            row = db.execute(
+                """
+                SELECT p.*, b.name AS brand_name, m.name AS manufacturer_name,
+                       pr.name AS producer_name, d.name AS distributor_name
+                FROM products p
+                LEFT JOIN brands b ON b.id = p.brand_id
+                LEFT JOIN manufacturers m ON m.id = p.manufacturer_id
+                LEFT JOIN producers pr ON pr.id = p.producer_id
+                LEFT JOIN distributors d ON d.id = p.distributor_id
+                WHERE p.id = ?
+                """,
+                (product_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def set_product_fields_if_empty(self, product_id: int, fields: dict[str, Any]) -> list[str]:
+        """Fill only absent canonical fields; conflicts stay in attribute evidence for review."""
+
+        allowed = {
+            "brand",
+            "brand_id",
+            "manufacturer_id",
+            "producer_id",
+            "distributor_id",
+            "product_family",
+            "variant",
+            "quantity",
+            "unit",
+            "packaging",
+            "flavor",
+            "fat_percentage",
+            "processing_type",
+            "category",
+            "origin_country",
+            "origin_region",
+            "barcode_gtin",
+            "official_product_url",
+            "official_image_url",
+        }
+        updates = {key: value for key, value in fields.items() if key in allowed and value is not None}
+        if not updates:
+            return []
+        with self.database.connect() as db:
+            existing = db.execute("SELECT * FROM products WHERE id = ?", (product_id,)).fetchone()
+            if not existing:
+                raise ValueError("Canonical product does not exist")
+            changed = [key for key, value in updates.items() if existing[key] in {None, ""} and value not in {None, ""}]
+            if changed:
+                assignments = ", ".join(f"{key} = ?" for key in changed)
+                db.execute(
+                    f"UPDATE products SET {assignments}, updated_at = ? WHERE id = ?",
+                    [updates[key] for key in changed] + [self._now(), product_id],
+                )
+            return changed
+
+    def add_product_alias(self, alias: ProductAlias) -> int:
+        with self.database.connect() as db:
+            return self._ensure_product_alias(
+                db,
+                alias.product_id,
+                alias.store_id,
+                alias.raw_name,
+                alias.normalized_name,
+                merchant_id=alias.merchant_id,
+                chain_id=alias.chain_id,
+                source_context=alias.source_context or "MANUAL",
+                matching_status=alias.matching_status,
+                matching_confidence=alias.matching_confidence,
+                source_raw_observation_id=alias.source_raw_observation_id,
+            )
+
+    def find_product_alias(
+        self,
+        raw_name: str,
+        normalized_name: str,
+        *,
+        merchant_id: str | None = None,
+        chain_id: str | None = None,
+        store_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Resolve the most-specific known alias without treating a guess as confirmation."""
+
+        with self.database.connect() as db:
+            row = db.execute(
+                """
+                SELECT a.*, p.canonical_name
+                FROM product_aliases a
+                JOIN products p ON p.id = a.product_id
+                WHERE a.raw_name = ? AND a.normalized_name = ?
+                  AND (a.merchant_id IS NULL OR a.merchant_id = ?)
+                  AND (a.chain_id IS NULL OR a.chain_id = ?)
+                  AND (a.store_id IS NULL OR a.store_id = ?)
+                ORDER BY (a.merchant_id IS NOT NULL) DESC,
+                         (a.chain_id IS NOT NULL) DESC,
+                         (a.store_id IS NOT NULL) DESC,
+                         a.matching_confidence DESC, a.id DESC
+                LIMIT 1
+                """,
+                (raw_name, normalized_name, merchant_id, chain_id, store_id),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def link_raw_observation(
+        self,
+        raw_observation_id: int,
+        product_id: int | None,
+        matching_status: str,
+        matching_confidence: float,
+    ) -> None:
+        with self.database.connect() as db:
+            db.execute(
+                """
+                UPDATE raw_observations
+                SET canonical_product_id = ?, matching_status = ?, matching_confidence = ?
+                WHERE id = ?
+                """,
+                (
+                    product_id,
+                    matching_status.upper(),
+                    max(0.0, min(1.0, matching_confidence)),
+                    raw_observation_id,
+                ),
+            )
+
+    def raw_observations(
+        self,
+        product_id: int | None = None,
+        document_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        where: list[str] = []
+        params: list[Any] = []
+        if product_id is not None:
+            where.append("canonical_product_id = ?")
+            params.append(product_id)
+        if document_id is not None:
+            where.append("source_document_id = ?")
+            params.append(document_id)
+        sql = "SELECT * FROM raw_observations"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY COALESCE(observed_at, created_at), id"
+        with self.database.connect() as db:
+            return [dict(row) for row in db.execute(sql, params)]
+
+    def upsert_product_source(self, source: ProductSource) -> int:
+        if not source.publisher.strip() or not source.url.strip():
+            raise ValueError("Product source publisher and URL are required")
+        with self.database.connect() as db:
+            db.execute(
+                """
+                INSERT INTO product_sources (
+                    product_id, source_type, publisher, url, retrieved_at, last_checked_at,
+                    status, confidence, raw_metadata_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(product_id, url) DO UPDATE SET
+                    last_checked_at=excluded.last_checked_at,
+                    status=excluded.status,
+                    confidence=excluded.confidence,
+                    raw_metadata_json=excluded.raw_metadata_json
+                """,
+                (
+                    source.product_id,
+                    source.source_type.upper(),
+                    source.publisher.strip(),
+                    source.url.strip(),
+                    self._timestamp(source.retrieved_at),
+                    self._timestamp(source.last_checked_at),
+                    source.status.upper(),
+                    max(0.0, min(1.0, source.confidence)),
+                    json.dumps(source.raw_metadata, ensure_ascii=False) if source.raw_metadata is not None else None,
+                ),
+            )
+            row = db.execute(
+                "SELECT id FROM product_sources WHERE product_id = ? AND url = ?",
+                (source.product_id, source.url.strip()),
+            ).fetchone()
+            return int(row["id"])
+
+    def list_product_sources(self, product_id: int) -> list[dict[str, Any]]:
+        with self.database.connect() as db:
+            return [
+                dict(row)
+                for row in db.execute(
+                    "SELECT * FROM product_sources WHERE product_id = ? ORDER BY confidence DESC, id DESC",
+                    (product_id,),
+                )
+            ]
+
+    def add_product_attribute_evidence(self, evidence: ProductAttributeEvidence) -> int:
+        if not evidence.field_name.strip():
+            raise ValueError("Product evidence field is required")
+        with self.database.connect() as db:
+            cursor = db.execute(
+                """
+                INSERT INTO product_attribute_evidence (
+                    product_id, field_name, value_text, source_id, source_type,
+                    confidence, confidence_state, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    evidence.product_id,
+                    evidence.field_name,
+                    evidence.value,
+                    evidence.source_id,
+                    evidence.source_type.upper() if evidence.source_type else None,
+                    max(0.0, min(1.0, evidence.confidence)),
+                    evidence.confidence_state.upper(),
+                    self._timestamp(evidence.created_at) or self._now(),
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def list_product_attribute_evidence(self, product_id: int, field_name: str | None = None) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM product_attribute_evidence WHERE product_id = ?"
+        params: list[Any] = [product_id]
+        if field_name:
+            sql += " AND field_name = ?"
+            params.append(field_name)
+        sql += " ORDER BY field_name, confidence DESC, id DESC"
+        with self.database.connect() as db:
+            return [dict(row) for row in db.execute(sql, params)]
+
+    def merge_products(
+        self, source_product_id: int, target_product_id: int, *, reason: str | None = None, created_by: str | None = None
+    ) -> int:
+        if source_product_id == target_product_id:
+            raise ValueError("A product cannot merge into itself")
+        with self.database.connect() as db:
+            target_product_id = self._resolve_product_id(db, target_product_id)
+            if source_product_id == target_product_id:
+                raise ValueError("A product cannot merge into its own resolved identity")
+            active = db.execute(
+                "SELECT id FROM product_merges WHERE source_product_id = ? AND undone_at IS NULL",
+                (source_product_id,),
+            ).fetchone()
+            if active:
+                raise ValueError("Source product already has an active merge")
+            cursor = db.execute(
+                """
+                INSERT INTO product_merges (
+                    source_product_id, target_product_id, reason, created_by, merged_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (source_product_id, target_product_id, reason, created_by, self._now()),
+            )
+            db.execute(
+                "UPDATE products SET active = 0, merged_into_product_id = ?, updated_at = ? WHERE id = ?",
+                (target_product_id, self._now(), source_product_id),
+            )
+            return int(cursor.lastrowid)
+
+    def undo_product_merge(self, merge_id: int, *, undone_by: str | None = None) -> None:
+        with self.database.connect() as db:
+            merge = db.execute("SELECT * FROM product_merges WHERE id = ?", (merge_id,)).fetchone()
+            if not merge or merge["undone_at"]:
+                raise ValueError("Active product merge does not exist")
+            now = self._now()
+            db.execute("UPDATE product_merges SET undone_at = ?, undone_by = ? WHERE id = ?", (now, undone_by, merge_id))
+            db.execute(
+                "UPDATE products SET active = 1, merged_into_product_id = NULL, updated_at = ? WHERE id = ?",
+                (now, merge["source_product_id"]),
+            )
+
+    def resolved_product_id(self, product_id: int) -> int:
+        with self.database.connect() as db:
+            return self._resolve_product_id(db, product_id)
+
+    def product_merge_history(self, product_id: int) -> list[dict[str, Any]]:
+        with self.database.connect() as db:
+            return [
+                dict(row)
+                for row in db.execute(
+                    """
+                    SELECT * FROM product_merges
+                    WHERE source_product_id = ? OR target_product_id = ?
+                    ORDER BY merged_at, id
+                    """,
+                    (product_id, product_id),
+                )
+            ]
+
+    def historical_prices(self, product_id: int) -> list[dict[str, Any]]:
+        """Return current and archived observations without double-counting linked scraper rows."""
+
+        with self.database.connect() as db:
+            product_ids = self._merged_product_ids(db, self._resolve_product_id(db, product_id))
+            placeholders = ",".join("?" for _ in product_ids)
+            rows = db.execute(
+                f"""
+                SELECT price, normal_price, observed_at, source_type, confidence_state,
+                       raw_observation_id, 'PRICE_HISTORY' AS evidence_kind
+                FROM price_history
+                WHERE product_id IN ({placeholders})
+                UNION ALL
+                SELECT parsed_price AS price, NULL AS normal_price,
+                       COALESCE(observed_at, created_at) AS observed_at,
+                       source_type, matching_status AS confidence_state,
+                       id AS raw_observation_id, 'RAW_OBSERVATION' AS evidence_kind
+                FROM raw_observations r
+                WHERE canonical_product_id IN ({placeholders})
+                  AND parsed_price IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM price_history p WHERE p.raw_observation_id = r.id
+                  )
+                ORDER BY observed_at, raw_observation_id
+                """,
+                [*product_ids, *product_ids],
+            )
+            return [dict(row) for row in rows]
+
+    def upsert_historical_source_document(self, document: HistoricalSourceDocument) -> int:
+        """Store one historical document once, even when discovery sees it repeatedly."""
+
+        if not document.url.strip():
+            raise ValueError("Historical source URL is required")
+        canonical_url = document.canonical_url or document.url
+        with self.database.connect() as db:
+            existing = None
+            if document.content_hash:
+                existing = db.execute(
+                    "SELECT id FROM historical_source_documents WHERE content_hash = ? LIMIT 1",
+                    (document.content_hash,),
+                ).fetchone()
+            if existing is None:
+                existing = db.execute(
+                    """
+                    SELECT id FROM historical_source_documents
+                    WHERE canonical_url = ? OR (canonical_url IS NULL AND url = ?)
+                    ORDER BY id LIMIT 1
+                    """,
+                    (canonical_url, document.url),
+                ).fetchone()
+            if existing:
+                document_id = int(existing["id"])
+                db.execute(
+                    """
+                    UPDATE historical_source_documents
+                    SET retrieved_at = ?, content_hash = COALESCE(?, content_hash),
+                        extraction_status = ?, raw_metadata_json = COALESCE(?, raw_metadata_json)
+                    WHERE id = ?
+                    """,
+                    (
+                        self._timestamp(document.retrieved_at),
+                        document.content_hash,
+                        document.extraction_status.upper(),
+                        json.dumps(document.raw_metadata, ensure_ascii=False)
+                        if document.raw_metadata is not None
+                        else None,
+                        document_id,
+                    ),
+                )
+                return document_id
+            cursor = db.execute(
+                """
+                INSERT INTO historical_source_documents (
+                    chain_id, merchant_id, store_id, source_type, url, canonical_url,
+                    publication_date, valid_from, valid_until, content_hash, retrieved_at,
+                    archived_at, extraction_status, raw_metadata_json, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    document.chain_id,
+                    document.merchant_id,
+                    document.store_id,
+                    document.source_type.upper(),
+                    document.url,
+                    canonical_url,
+                    document.publication_date.isoformat() if document.publication_date else None,
+                    document.valid_from.isoformat() if document.valid_from else None,
+                    document.valid_until.isoformat() if document.valid_until else None,
+                    document.content_hash,
+                    self._timestamp(document.retrieved_at),
+                    self._timestamp(document.archived_at),
+                    document.extraction_status.upper(),
+                    json.dumps(document.raw_metadata, ensure_ascii=False) if document.raw_metadata is not None else None,
+                    self._now(),
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def list_historical_source_documents(
+        self, chain_id: str | None = None, extraction_status: str | None = None
+    ) -> list[dict[str, Any]]:
+        where: list[str] = []
+        params: list[Any] = []
+        if chain_id:
+            where.append("chain_id = ?")
+            params.append(chain_id)
+        if extraction_status:
+            where.append("extraction_status = ?")
+            params.append(extraction_status.upper())
+        sql = "SELECT * FROM historical_source_documents"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY COALESCE(publication_date, retrieved_at) DESC, id DESC"
+        with self.database.connect() as db:
+            return [dict(row) for row in db.execute(sql, params)]
+
+    def create_validation_task(self, task: ValidationTask) -> int:
+        with self.database.connect() as db:
+            usefulness_score = task.usefulness_score
+            if usefulness_score <= 0:
+                if task.raw_observation_id is not None:
+                    raw = db.execute("SELECT raw_name FROM raw_observations WHERE id = ?", (task.raw_observation_id,)).fetchone()
+                    usefulness_score = float(
+                        db.execute(
+                            "SELECT COUNT(*) FROM raw_observations WHERE raw_name = ?",
+                            (raw["raw_name"],),
+                        ).fetchone()[0]
+                    ) if raw else 1.0
+                elif task.candidate_product_id is not None:
+                    usefulness_score = float(
+                        db.execute(
+                            "SELECT COUNT(*) FROM raw_observations WHERE canonical_product_id = ?",
+                            (task.candidate_product_id,),
+                        ).fetchone()[0]
+                    )
+                usefulness_score = max(1.0, usefulness_score)
+            now = self._timestamp(task.created_at) or self._now()
+            cursor = db.execute(
+                """
+                INSERT INTO validation_tasks (
+                    task_type, raw_observation_id, candidate_product_id, payload_json,
+                    status, usefulness_score, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    task.task_type.upper(),
+                    task.raw_observation_id,
+                    task.candidate_product_id,
+                    json.dumps(task.payload, ensure_ascii=False) if task.payload is not None else None,
+                    task.status.upper(),
+                    usefulness_score,
+                    now,
+                    now,
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def list_validation_tasks(self, status: str = "OPEN", limit: int = 50) -> list[dict[str, Any]]:
+        with self.database.connect() as db:
+            return [
+                dict(row)
+                for row in db.execute(
+                    """
+                    SELECT * FROM validation_tasks
+                    WHERE status = ?
+                    ORDER BY usefulness_score DESC, created_at, id
+                    LIMIT ?
+                    """,
+                    (status.upper(), limit),
+                )
+            ]
+
+    def record_validation_answer(self, answer: ValidationAnswer) -> int:
+        if not answer.contributor_id.strip():
+            raise ValueError("Contributor identity is required for independent validation")
+        with self.database.connect() as db:
+            cursor = db.execute(
+                """
+                INSERT INTO validation_answers (
+                    validation_task_id, contributor_id, contributor_role, answer, created_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(validation_task_id, contributor_id) DO UPDATE SET
+                    contributor_role=excluded.contributor_role,
+                    answer=excluded.answer,
+                    created_at=excluded.created_at
+                """,
+                (
+                    answer.validation_task_id,
+                    answer.contributor_id,
+                    answer.contributor_role.upper(),
+                    answer.answer.upper(),
+                    self._timestamp(answer.created_at) or self._now(),
+                ),
+            )
+            row = db.execute(
+                """
+                SELECT id FROM validation_answers
+                WHERE validation_task_id = ? AND contributor_id = ?
+                """,
+                (answer.validation_task_id, answer.contributor_id),
+            ).fetchone()
+            return int(row["id"] if row else cursor.lastrowid)
+
+    def validation_answers(self, task_id: int) -> list[dict[str, Any]]:
+        with self.database.connect() as db:
+            return [
+                dict(row)
+                for row in db.execute(
+                    "SELECT * FROM validation_answers WHERE validation_task_id = ? ORDER BY created_at, id",
+                    (task_id,),
+                )
+            ]
+
+    def set_validation_task_status(self, task_id: int, status: str) -> None:
+        with self.database.connect() as db:
+            now = self._now()
+            db.execute(
+                """
+                UPDATE validation_tasks
+                SET status = ?, updated_at = ?, resolved_at = CASE WHEN ? IN ('CONFIRMED', 'REJECTED', 'NEEDS_REVIEW')
+                    THEN ? ELSE NULL END
+                WHERE id = ?
+                """,
+                (status.upper(), now, status.upper(), now, task_id),
+            )
 
     def add_basket_item(self, query: str, quantity: int = 1) -> None:
         with self.database.connect() as db:
@@ -1105,6 +1915,43 @@ class Repository:
             return json.loads(row["value_json"])
         except json.JSONDecodeError:
             return default
+
+    def _resolve_product_id(self, db, product_id: int) -> int:
+        """Follow active merge links without changing the original evidence owner."""
+
+        seen: set[int] = set()
+        current = product_id
+        while current not in seen:
+            seen.add(current)
+            row = db.execute(
+                """
+                SELECT target_product_id FROM product_merges
+                WHERE source_product_id = ? AND undone_at IS NULL
+                ORDER BY id DESC LIMIT 1
+                """,
+                (current,),
+            ).fetchone()
+            if not row:
+                return current
+            current = int(row["target_product_id"])
+        raise ValueError("Product merge cycle detected")
+
+    def _merged_product_ids(self, db, root_product_id: int) -> list[int]:
+        rows = db.execute(
+            """
+            WITH RECURSIVE merged_products(id) AS (
+                SELECT ?
+                UNION
+                SELECT m.source_product_id
+                FROM product_merges m
+                JOIN merged_products p ON m.target_product_id = p.id
+                WHERE m.undone_at IS NULL
+            )
+            SELECT id FROM merged_products
+            """,
+            (root_product_id,),
+        )
+        return [int(row["id"]) for row in rows]
 
     def _now(self) -> str:
         return datetime.now(UTC).isoformat(timespec="seconds")

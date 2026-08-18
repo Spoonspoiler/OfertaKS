@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
 
@@ -10,6 +11,8 @@ from ofertaks.database.schema import (
     MERCHANT_MIGRATION_COLUMNS,
     OFFER_MIGRATION_COLUMNS,
     POST_MIGRATION_SQL,
+    PRICE_HISTORY_MIGRATION_COLUMNS,
+    PRODUCT_MIGRATION_COLUMNS,
     SCHEMA_SQL,
     SCHEMA_VERSION,
 )
@@ -57,6 +60,10 @@ class Database:
             connection.executescript(SCHEMA_SQL)
             self._migrate_offer_columns(connection)
             self._migrate_merchant_columns(connection)
+            self._migrate_product_columns(connection)
+            self._migrate_price_history_columns(connection)
+            self._migrate_product_aliases(connection)
+            self._backfill_legacy_offer_evidence(connection)
             connection.executescript(POST_MIGRATION_SQL)
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
@@ -77,3 +84,97 @@ class Database:
         for column, definition in MERCHANT_MIGRATION_COLUMNS.items():
             if column not in existing:
                 connection.execute(f"ALTER TABLE merchants ADD COLUMN {column} {definition}")
+
+    def _migrate_product_columns(self, connection: sqlite3.Connection) -> None:
+        existing = {row["name"] for row in connection.execute("PRAGMA table_info(products)")}
+        for column, definition in PRODUCT_MIGRATION_COLUMNS.items():
+            if column not in existing:
+                connection.execute(f"ALTER TABLE products ADD COLUMN {column} {definition}")
+        now = datetime.now(UTC).isoformat(timespec="seconds")
+        connection.execute("UPDATE products SET active = 1 WHERE active IS NULL")
+        connection.execute("UPDATE products SET created_at = ? WHERE created_at IS NULL", (now,))
+        connection.execute("UPDATE products SET updated_at = ? WHERE updated_at IS NULL", (now,))
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO brands (name, normalized_name, created_at, updated_at)
+            SELECT DISTINCT TRIM(brand), LOWER(TRIM(brand)), ?, ?
+            FROM products
+            WHERE brand IS NOT NULL AND TRIM(brand) != ''
+            """,
+            (now, now),
+        )
+        connection.execute(
+            """
+            UPDATE products
+            SET brand_id = (
+                SELECT brands.id FROM brands
+                WHERE brands.normalized_name = LOWER(TRIM(products.brand))
+            )
+            WHERE brand_id IS NULL AND brand IS NOT NULL AND TRIM(brand) != ''
+            """
+        )
+
+    def _migrate_price_history_columns(self, connection: sqlite3.Connection) -> None:
+        existing = {row["name"] for row in connection.execute("PRAGMA table_info(price_history)")}
+        for column, definition in PRICE_HISTORY_MIGRATION_COLUMNS.items():
+            if column not in existing:
+                connection.execute(f"ALTER TABLE price_history ADD COLUMN {column} {definition}")
+
+    def _migrate_product_aliases(self, connection: sqlite3.Connection) -> None:
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(product_aliases)")}
+        if {"merchant_id", "chain_id", "matching_status", "matching_confidence", "created_at"} <= columns:
+            return
+        connection.execute("DROP INDEX IF EXISTS idx_aliases_lookup")
+        connection.execute("ALTER TABLE product_aliases RENAME TO product_aliases_legacy_v5")
+        connection.executescript(
+            """
+            CREATE TABLE product_aliases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+                store_id TEXT REFERENCES stores(id),
+                merchant_id TEXT REFERENCES merchants(id),
+                chain_id TEXT REFERENCES chains(id),
+                raw_name TEXT NOT NULL,
+                normalized_name TEXT NOT NULL,
+                source_context TEXT,
+                matching_status TEXT NOT NULL DEFAULT 'UNVERIFIED',
+                matching_confidence REAL NOT NULL DEFAULT 0.0,
+                source_raw_observation_id INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(store_id, merchant_id, chain_id, raw_name, normalized_name)
+            );
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO product_aliases (
+                id, product_id, store_id, raw_name, normalized_name,
+                source_context, matching_status, matching_confidence, created_at
+            )
+            SELECT id, product_id, store_id, raw_name, normalized_name,
+                   'LEGACY_STORE_ALIAS', 'AUTO_MATCHED', 0.75, CURRENT_TIMESTAMP
+            FROM product_aliases_legacy_v5
+            """
+        )
+        connection.execute("DROP TABLE product_aliases_legacy_v5")
+
+    def _backfill_legacy_offer_evidence(self, connection: sqlite3.Connection) -> None:
+        """Preserve current legacy offers as evidence without inventing missing raw price text."""
+
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO raw_observations (
+                store_id, raw_name, raw_price_text, parsed_price, raw_quantity_text,
+                source_type, source_url, observed_at, canonical_product_id,
+                matching_status, matching_confidence, dedupe_key, created_at
+            )
+            SELECT o.store_id, o.raw_name, NULL, o.offer_price, NULL,
+                   'LEGACY_SCRAPER', o.source_url, o.scraped_at, a.product_id,
+                   'AUTO_MATCHED', 0.75, 'legacy-offer:' || o.id, o.scraped_at
+            FROM offers o
+            LEFT JOIN product_aliases a
+              ON a.store_id = o.store_id
+             AND a.raw_name = o.raw_name
+             AND a.normalized_name = o.normalized_name
+            """
+        )

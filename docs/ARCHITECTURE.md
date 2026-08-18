@@ -13,6 +13,7 @@ ofertaks/
   scrapers/
   parsing/
   normalization/
+  product_sources/
   database/
   services/
   recipes/
@@ -28,15 +29,24 @@ tests/
 
 ```text
 public sources
-  -> scraper adapter
-  -> raw Offer evidence
+  -> scraper / archive / official-source adapter
+  -> immutable raw observation or source document
   -> deterministic normalization
-  -> SQLite current offers + price history
+  -> canonical product, aliases, and reversible merge links
+  -> SQLite current offers + historical price archive
   -> services
   -> Kivy UI
 ```
 
 Scrapers are independent. A broken scraper returns `failed` or `partial` and must not prevent other sources from syncing.
+
+## Product Knowledge And History
+
+`products` represents a purchasable canonical identity rather than a loose display name. Brand, manufacturer, producer, distributor, family, variant, pack size, GTIN, packaging, origin, and official references are kept as distinct fields when evidence supports them. Observed retailer wording stays in `product_aliases`, scoped to the most specific available merchant, chain, or store context.
+
+`raw_observations` and `historical_source_documents` preserve retrieved evidence. They are append-only: matching may be confirmed later, but the original text, price, date, source, and document reference are not rewritten. Product consolidation uses a merge record and can be undone without moving the evidence rows.
+
+`product_sources` and `product_attribute_evidence` make official-source enrichment traceable. Conflicting fields create validation work instead of silently replacing known values. Historical discovery starts at 2025-01-01 and only records metadata or evidence provided by an explicit adapter; OCR and bulk crawling are deliberately outside this layer.
 
 ## Location Model
 

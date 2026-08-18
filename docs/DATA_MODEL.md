@@ -10,9 +10,15 @@ Raw scraped and community observation data is evidence. It must be retained and 
 - `merchants`: concrete places with coordinates, merchant type, optional chain, verification state, and payment/opening-hour metadata.
 - `stores`: scraper source compatibility table.
 - `offers`: current scraped offers, optionally linked to merchant and chain.
-- `products`: canonical products generated from deterministic normalization.
-- `product_aliases`: observed store wording mapped to canonical products.
-- `price_history`: append-only observations from syncs.
+- `products`: canonical purchasable identities with structured brand, producer, family, variant, pack, GTIN, packaging, origin, official-reference, active, and reversible-merge fields.
+- `brands`, `manufacturers`, `producers`, `distributors`: normalized organization identities linked to a canonical product when evidence supports them.
+- `product_aliases`: observed merchant/chain/store wording mapped to canonical products with context, match state, confidence, and evidence reference.
+- `raw_observations`: append-only price/name/quantity/source evidence. Original raw fields are immutable; only an evidence-to-product match may be resolved later.
+- `historical_source_documents`: historical page, flyer, archive, or document metadata with dates, source context, extraction state, and content identity.
+- `price_history`: append-only synchronized price records, optionally linked to the raw observation that produced them.
+- `product_sources`, `product_attribute_evidence`: official or structured source provenance and field-level evidence, including conflicts.
+- `product_merges`: reversible canonical-product consolidation records; historical evidence keeps its original product link.
+- `validation_tasks`, `validation_answers`: contributor/admin data-quality work with independent-answer consensus and explicit unresolved conflicts.
 - `pantry_items`: local user-owned food.
 - `recipes`, `recipe_ingredients`, `recipe_tags`: local recipe library.
 - `merchant_price_observations`: manual/community price evidence.
@@ -33,3 +39,7 @@ The main Home, Offers, and Search views are food-only. Food categories are detec
 ## Freshness
 
 Community prices have conceptual freshness. Fruit and vegetable prices become stale faster than packaged goods.
+
+## Historical Archive Policy
+
+The archive begins at `2025-01-01`. A historical row is stored only when a scraper, explicit archive adapter, receipt, flyer, or other allowed source supplies it. The app does not infer unavailable historical prices and does not require OCR to record a source document. Exact product identity, same variant in a different size, product family, category equivalence, and unrelated products remain separate relationship levels; only exact identity should be used for direct price history.

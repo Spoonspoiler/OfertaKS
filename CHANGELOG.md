@@ -4,6 +4,9 @@
 
 ### Added
 
+- Canonical product knowledge base with normalized organizations, structured purchasable identities, merchant/chain/store aliases, GTIN and source references.
+- Append-only raw observation and historical source-document archive starting at 2025-01-01, with reversible product merges, validation tasks, and independent-answer consensus.
+- Conservative official product metadata parsing/enrichment with source provenance and conflict evidence, plus promotion analysis based on observed history.
 - Food browsing categories and filters for fruit and vegetables, dairy, meat and fish, pantry, drinks, bakery, frozen food, snacks, and other food.
 - Local user price-update observations with merchant name, product, quantity/unit, origin provenance/confidence, optional photo path, quality, notes, and timestamp.
 - Price-status classification against observed history and transparent source capability statuses for ETC, Viva Fresh, Interex, and Albi.
@@ -35,6 +38,8 @@
 - Application data, cache, debug scraper, and SQLite paths now go through centralized portable path helpers.
 - English is the fallback UI language.
 - Kivy screens and offer cards now bind label text width correctly and constrain desktop layout width to avoid vertical text collapse.
+- Prishtina's online basemap now prioritizes tiles nearest the viewport center, keeps unresolved tiles transparent, and retains its local cache for re-visits.
+- Price history services now include archived raw evidence and reversible merged identities without double-counting synchronized scraper observations.
 
 ### Known Limits
 

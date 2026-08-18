@@ -12,6 +12,7 @@ OfertaKS is an offline-first Android-capable Python/Kivy app. It is growing from
 - `ofertaks/scrapers`: store adapters. Scraper code must stay out of UI modules.
 - `ofertaks/parsing`: price, unit, date, HTML, and PDF parsing.
 - `ofertaks/normalization`: deterministic product/brand matching.
+- `ofertaks/product_sources`: source-attributed product parsers and conservative enrichment.
 - `ofertaks/database`: SQLite schema, migrations, and repository.
 - `ofertaks/services`: sync, basket, history, comparison, and merchant services.
 - `ofertaks/recipes`: recipe and pantry matching.
@@ -61,6 +62,9 @@ SQLite schema lives in `ofertaks/database/schema.py`. Increment `SCHEMA_VERSION`
 - Chain is not the fundamental entity; it is an attribute/relationship of merchants and scraper sources.
 - `stores` remains a scraper compatibility table only.
 - Raw scraped data must never be destroyed.
+- Historical source documents and raw observations are append-only evidence. Preserve original values; later matching must use links, validation state, or reversible merges rather than rewrites.
+- Canonical-product matching must distinguish exact product, same variant/different size, same product family, category equivalent, and unrelated items. Only exact products share direct price history.
+- Official-source data may fill blanks but must not silently overwrite conflicts; persist field evidence and create validation work instead.
 - Fake production data is forbidden. Fixtures belong only in tests or explicit developer data.
 - Scraping failure must not crash the app.
 - Community observations require provenance, timestamps, confidence, and freshness handling.

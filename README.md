@@ -129,14 +129,19 @@ Core modules are separated from the UI:
 - `parsing`: price, unit, date, HTML, PDF helpers
 - `normalization`: deterministic product and brand normalization plus fuzzy matching
 - `database`: SQLite schema and repository
+- `product_sources`: explicit parsers and source-attributed enrichment for canonical products
 - `scrapers`: store-specific adapters
-- `services`: sync, history, comparison, basket optimizer
+- `services`: sync, historical archive, validation, promotion analysis, history, comparison, basket optimizer
 - `recipes`: pantry and recipe matching
 - `routing`: distance helpers
 - `community`: freshness, quality, and origin reasoning
 - `ui`: Kivy screens and widgets
 
 More detail is in `docs/ARCHITECTURE.md`, `docs/DATA_MODEL.md`, and `AGENTS.md`.
+
+## Canonical Products And Historical Evidence
+
+Schema version 5 adds a local canonical-product knowledge base and a historical evidence archive. Raw retailer, flyer, receipt, and manual evidence is append-only; its original source fields are retained even when a later match links it to a canonical product. Product aliases are scoped by merchant, chain, or scraper store, conflicts remain visible for validation, and product merges are reversible. Historical source discovery begins at `2025-01-01`; this foundation does not imply OCR, fabricated history, or background crawling.
 
 ## Git Workflow
 

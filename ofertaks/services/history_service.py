@@ -29,7 +29,9 @@ class HistoryService:
         self.repository = repository
 
     def stats_for_product(self, product_id: int) -> HistoryStats:
-        rows = self.repository.price_history(product_id)
+        # This view includes archived raw evidence and any reversible product
+        # merges, while avoiding duplicate scraper observations.
+        rows = self.repository.historical_prices(product_id)
         prices = [float(row["price"]) for row in rows]
         now = datetime.now(UTC)
 

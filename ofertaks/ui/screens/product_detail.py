@@ -178,7 +178,7 @@ class ProductDetailScreen(Screen):
         else:
             self.history_explanation.text = t("not_enough_history")
         self.graph.set_prices(
-            [row["price"] for row in self.app.repository.price_history(product_id)]
+            [row["price"] for row in self.app.repository.historical_prices(product_id)]
             if product_id is not None
             else []
         )
