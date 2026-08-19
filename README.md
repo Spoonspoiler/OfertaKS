@@ -82,7 +82,7 @@ Scrapers never insert fake production data.
 
 - ETC: text offer pages are supported and are the first real data source.
 - Interex: flyer metadata and PDF downloads are supported. Text extraction uses `pypdf`; image-only PDFs are marked `ocr_required`.
-- Viva Fresh: JSON-LD and structured card parsing are supported. Current public offer pages may be image-based; those are recorded as partial, not fabricated.
+- Viva Fresh: the public online catalogue is paginated across its active categories and provides current price, pre-promotion price, unit, stock, image, and source URL. Its promotional page remains a transparent image-based fallback when the catalogue is unavailable.
 
 ## Merchant, Pantry, Recipes, Routing
 
@@ -100,7 +100,7 @@ OfertaKS treats concrete merchants/places as the fundamental location entity. Ch
 
 The first geographic market is Prishtina and its immediate surroundings. `Map` is a primary navigation surface: it uses an OSM-compatible, on-demand tile provider for geographic context and SQLite for OfertaKS merchant, product, price, origin, quality, and freshness data. The map works from cached merchant data when offline; tiles are requested only for the visible viewport and retain visible `© OpenStreetMap contributors` attribution.
 
-Food-place discovery is a user-triggered, one-request bounded Overpass import for the configured Prishtina region. It supports real OSM food places such as supermarkets, groceries, greengrocers, markets, bakeries, butchers, fish shops, farms, and specialty food shops. It does not import all Kosovo or fabricate stores. Chain locations and price-source capability are intentionally distinct: ETC is live, Viva Fresh and Interex are partial, while Albi Market, Maxi, Meridian Express, Emona Center, and SPAR Kosovo are location-only or not yet automated.
+Food-place discovery is a user-triggered, one-request bounded Overpass import for the configured Prishtina region. It supports real OSM food places such as supermarkets, groceries, greengrocers, markets, bakeries, butchers, fish shops, farms, and specialty food shops. It does not import all Kosovo or fabricate stores. Chain locations and price-source capability are intentionally distinct: ETC and Viva Fresh are live, Interex is partial, while Albi Market, Maxi, Meridian Express, Emona Center, and SPAR Kosovo are location-only or not yet automated.
 
 ## Scraper Maintenance
 

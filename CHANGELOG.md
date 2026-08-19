@@ -4,6 +4,7 @@
 
 ### Added
 
+- Viva Fresh public catalogue scraping across active categories and paginated product lists, with real current/pre-promotion prices, stock filtering, units, images, and source URLs.
 - Canonical product knowledge base with normalized organizations, structured purchasable identities, merchant/chain/store aliases, GTIN and source references.
 - Append-only raw observation and historical source-document archive starting at 2025-01-01, with reversible product merges, validation tasks, and independent-answer consensus.
 - Conservative official product metadata parsing/enrichment with source provenance and conflict evidence, plus promotion analysis based on observed history.
@@ -35,6 +36,7 @@
 
 ### Changed
 
+- Viva Fresh is now reported as a live price source. Interex remains partial until its public flyers expose text prices without OCR.
 - Main browsing and search now default to food-only offers without deleting retained non-food data.
 - Offer cards now use an image when available or a category artwork placeholder, and show store, category, price, discount, origin, and history-based price status.
 - Product detail now shows comparable current prices, provenance, price history context, and an entry point for a local price update.

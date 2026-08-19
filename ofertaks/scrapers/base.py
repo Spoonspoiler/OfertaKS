@@ -68,11 +68,13 @@ class BaseScraper:
         scraped_at: datetime | None = None,
         raw_category: str | None = None,
         extra_text: str = "",
+        quantity_override: float | None = None,
+        unit_override: str | None = None,
     ) -> Offer:
         raw_name = clean_text(raw_name)
         normalized = normalize_product_name(raw_name, raw_category=raw_category or category)
-        quantity = normalized.quantity
-        unit = normalized.unit
+        quantity = quantity_override if quantity_override is not None else normalized.quantity
+        unit = unit_override or normalized.unit
         unit_price = calculate_unit_price(offer_price, quantity, unit)
         discount = parse_discount_percent(extra_text)
         if discount is None and normal_price and normal_price > offer_price:

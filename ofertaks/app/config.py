@@ -78,8 +78,8 @@ SOURCE_STATUS_CONFIG = (
     {
         "id": "viva_fresh",
         "name": "Viva Fresh",
-        "availability": "partial",
-        "status_key": "store_status_viva_partial",
+        "availability": "live",
+        "status_key": "store_status_live",
     },
     {
         "id": "interex",

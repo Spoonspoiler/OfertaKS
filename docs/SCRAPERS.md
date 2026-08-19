@@ -2,7 +2,7 @@
 
 ## Current Adapters
 
-- `VivaFreshScraper`: JSON-LD/structured HTML first. Current public page appears image-based, so it returns `partial` when no text offer can be parsed.
+- `VivaFreshScraper`: paginates Viva Fresh's public online catalogue across active source categories. It preserves current and pre-promotion prices, unit, stock, image, and product URL; out-of-stock products are skipped. The public promotional page remains a transparent HTML/image fallback.
 - `InterexScraper`: flyer index and PDF download. Uses `pypdf`; marks image-only/no-text PDFs as OCR-required instead of faking data.
 - `ETCScraper`: parses current ETC text offer pages and is the first real working source.
 

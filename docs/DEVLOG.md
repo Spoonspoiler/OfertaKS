@@ -46,3 +46,7 @@
 - Added a manual barcode screen available from Search, Product Detail, and price updates. It resolves verified GTINs before aliases, lists known current offers, and can create a minimal user-supplied packaged identity for a valid unknown code. The camera scanner is deliberately a platform boundary until a real Android APK validates it.
 - Added merchant ownership states (`INDEPENDENT_LOCAL`, `LOCAL_CHAIN`, `NATIONAL_CHAIN`, `INTERNATIONAL_CHAIN`, `UNKNOWN`). Local preference is applied only to explicitly classified merchants and only when their exact-product price is within a fixed 6% tolerance of the absolute cheapest price. No partner or commission field participates in the recommendation.
 - Fixed a visible offer-card contradiction caused by a cache key that ignored price and scrape timestamp. The cache now keeps individual price lines separate. Product history charts also distinguish regular price points from promotion points, and selected map merchants now offer a transparent `Offers here` path. Marker labels show an actual known chain or merchant name rather than generic supermarket codes.
+
+## 2026-08-19
+
+- Replaced Viva Fresh's image-first promotion scraper with its public online catalogue adapter. It follows active category/subcategory pagination, keeps source prices and product evidence, skips out-of-stock products, and retains the promotion page only as a transparent fallback. ETC remains live; Interex remains partial pending text-extractable current flyers.

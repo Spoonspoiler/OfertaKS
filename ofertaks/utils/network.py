@@ -32,21 +32,33 @@ class HTTPClient:
         self._validators: dict[str, dict[str, str]] = {}
 
     def get(self, url: str, **kwargs: Any) -> HTTPResponse:
+        return self.request("GET", url, **kwargs)
+
+    def post_json(self, url: str, payload: dict[str, Any], **kwargs: Any) -> HTTPResponse:
+        """Post a JSON payload through the shared retry and rate-limit path."""
+
+        headers = dict(kwargs.pop("headers", {}) or {})
+        headers.setdefault("Content-Type", "application/json")
+        return self.request("POST", url, headers=headers, json=payload, **kwargs)
+
+    def request(self, method: str, url: str, **kwargs: Any) -> HTTPResponse:
         headers = dict(kwargs.pop("headers", {}) or {})
         validators = self._validators.get(url, {})
-        if validators.get("etag"):
+        if method.upper() == "GET" and validators.get("etag"):
             headers["If-None-Match"] = validators["etag"]
-        if validators.get("last_modified"):
+        if method.upper() == "GET" and validators.get("last_modified"):
             headers["If-Modified-Since"] = validators["last_modified"]
+        timeout = kwargs.pop("timeout", config.HTTP_TIMEOUT_SECONDS)
 
         with self._semaphore:
             self._respect_host_delay(url)
             last_exc: Exception | None = None
             for attempt in range(config.HTTP_MAX_RETRIES + 1):
                 try:
-                    response = self.session.get(
+                    response = self.session.request(
+                        method,
                         url,
-                        timeout=kwargs.pop("timeout", config.HTTP_TIMEOUT_SECONDS),
+                        timeout=timeout,
                         headers=headers,
                         **kwargs,
                     )
@@ -65,7 +77,7 @@ class HTTPClient:
                     if attempt >= config.HTTP_MAX_RETRIES:
                         break
                     time.sleep(0.8 * (2**attempt))
-            raise RuntimeError(f"GET failed for {url}: {last_exc}") from last_exc
+            raise RuntimeError(f"{method.upper()} failed for {url}: {last_exc}") from last_exc
 
     @staticmethod
     def _response_text(response: Any) -> str:
@@ -83,6 +95,10 @@ class HTTPClient:
             "application/zip",
         }:
             return ""
+        if content_type == "application/json" or content_type.endswith("+json"):
+            # JSON is UTF-8 by definition. Some catalogue proxies omit or
+            # misstate their charset, which otherwise corrupts Albanian text.
+            return response.content.decode("utf-8")
         return response.text
 
     def _respect_host_delay(self, url: str) -> None:
